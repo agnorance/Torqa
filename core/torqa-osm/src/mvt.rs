@@ -290,11 +290,10 @@ fn add_road(
     };
     let railway = drawn_railway(tags.text("class"), tags.text("subclass"));
     let funicular = tags.text("subclass") == "funicular";
-    for line in lines(geometry) {
-        let line = projection.line(line);
-        if line.len() < 2 {
-            continue;
-        }
+    for line in lines(geometry)
+        .into_iter()
+        .flat_map(|l| projection.own_parts(l))
+    {
         if railway {
             data.railways.push(Railway {
                 line: line.clone(),
@@ -401,6 +400,44 @@ impl TileProjection {
         line.0.iter().map(|c| self.point(c.x, c.y)).collect()
     }
 
+    /// The parts of `line` (tile pixels) within the tile itself, as latitude/longitude. Tiles
+    /// repeat their neighbours' ways in a buffer around them, cut at its edge: two copies of a
+    /// way crossing a tile border would overlap there, each ending somewhere along the other
+    /// (#116, #117), where a bridge would get a deck down to the ground mid-span and two decks
+    /// would cross. Cut at the border instead, the neighbours' parts meet end to end there.
+    fn own_parts(&self, line: &LineString<f64>) -> Vec<Vec<LatLon>> {
+        let mut parts: Vec<Vec<(f64, f64)>> = Vec::new();
+        let mut part: Vec<(f64, f64)> = Vec::new();
+        for pair in line.0.windows(2) {
+            let (from, to) = ((pair[0].x, pair[0].y), (pair[1].x, pair[1].y));
+            let Some((t0, t1)) = clip(from, to, self.extent) else {
+                parts.push(std::mem::take(&mut part));
+                continue;
+            };
+            // The points themselves where they lie inside, so the parts of a line run on
+            // exactly from one segment to the next.
+            let at = |share: f64| {
+                (
+                    from.0 + (to.0 - from.0) * share,
+                    from.1 + (to.1 - from.1) * share,
+                )
+            };
+            let start = if t0 > 0.0 { at(t0) } else { from };
+            let end = if t1 < 1.0 { at(t1) } else { to };
+            if part.last() != Some(&start) {
+                parts.push(std::mem::take(&mut part));
+                part.push(start);
+            }
+            part.push(end);
+        }
+        parts.push(part);
+        parts
+            .into_iter()
+            .filter(|points| points.len() >= 2)
+            .map(|points| points.iter().map(|&(x, y)| self.point(x, y)).collect())
+            .collect()
+    }
+
     /// Whether a feature centred at `(x, y)` (tile pixels) is this tile's to keep. Tiles repeat
     /// features near their borders. Copies of a building are identical unless it is so large
     /// that both tiles cut it, so exactly one tile contains their centre; copies of such
@@ -427,6 +464,33 @@ impl TileProjection {
         }
         points
     }
+}
+
+/// The part of segment `a`–`b` (tile pixels) within the tile `0..=extent` square, as positions
+/// along it (0–1), if any (Liang–Barsky).
+fn clip(a: (f64, f64), b: (f64, f64), extent: f64) -> Option<(f64, f64)> {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let (mut t0, mut t1) = (0.0_f64, 1.0_f64);
+    for (p, q) in [
+        (-dx, a.0),
+        (dx, extent - a.0),
+        (-dy, a.1),
+        (dy, extent - a.1),
+    ] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return None;
+            }
+        } else {
+            let t = q / p;
+            if p < 0.0 {
+                t0 = t0.max(t);
+            } else {
+                t1 = t1.min(t);
+            }
+        }
+    }
+    (t0 < t1).then_some((t0, t1))
 }
 
 #[cfg(test)]
@@ -689,6 +753,48 @@ mod tests {
             "trams, subways and roads are no railways"
         );
         assert_eq!(data.roads.len(), 1);
+    }
+
+    #[test]
+    fn ways_crossing_a_tile_border_meet_there_end_to_end() {
+        // #116, #117: the copies in the tiles' buffers overlapped, ending along each other.
+        let here = TileProjection {
+            x: 8531.0,
+            y: 5767.0,
+            extent: 4096.0,
+        };
+        let east = TileProjection { x: 8532.0, ..here };
+        let tags = Tags(HashMap::from([(
+            "class".to_owned(),
+            Value::String("minor".to_owned()),
+        )]));
+        // One street in each tile's pixels, reaching into the other's buffer: x 4000–4150 here
+        // is −96–54 there, crossing the border at 96 / 150 of the way.
+        let street = |shift: f64| {
+            Geometry::LineString(LineString::from(vec![
+                (4000.0 - shift, 500.0),
+                (4150.0 - shift, 520.0),
+            ]))
+        };
+        let mut data = MapData::default();
+        add_road(&mut data, &tags, &street(0.0), &here);
+        add_road(&mut data, &tags, &street(4096.0), &east);
+
+        assert_eq!(data.roads.len(), 2);
+        let (western, eastern) = (&data.roads[0].line, &data.roads[1].line);
+        let border = here.point(4096.0, 500.0 + 20.0 * 96.0 / 150.0);
+        let close = |p: LatLon| (p.0 - border.0).abs() < 1e-9 && (p.1 - border.1).abs() < 1e-9;
+        assert!(
+            close(western[western.len() - 1]) && close(eastern[0]),
+            "{western:?} {eastern:?}"
+        );
+        // Neither reaches past the border into the other tile.
+        assert!(western.iter().all(|p| p.1 <= border.1 + 1e-9));
+        assert!(eastern.iter().all(|p| p.1 >= border.1 - 1e-9));
+        // A way only in the buffer is the neighbour's.
+        let beyond = Geometry::LineString(LineString::from(vec![(4110.0, 500.0), (4150.0, 500.0)]));
+        add_road(&mut data, &tags, &beyond, &here);
+        assert_eq!(data.roads.len(), 2);
     }
 
     #[test]

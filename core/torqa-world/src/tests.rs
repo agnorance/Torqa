@@ -354,6 +354,53 @@ async fn streets_meeting_the_road_ridden_get_kerbs_at_its_edge() {
     assert!(!paved(3.6, 600.0 + 3.35));
 }
 
+#[tokio::test]
+async fn streets_on_a_hillside_are_level_across_the_ground_shaped_around_them() {
+    use torqa_osm::{Road, RoadClass};
+
+    // #116: a street along the hillside, which rises 10 % eastwards. It lay tilted with the
+    // slope, its uphill edge half a metre above its downhill one.
+    let world = world(&MapData {
+        roads: vec![Road {
+            class: RoadClass::Street,
+            line: vec![at(200.0, 100.0), at(200.0, 900.0)],
+            structure: None,
+        }],
+        ..MapData::default()
+    })
+    .await;
+
+    // The natural ground at the street's centre line.
+    let level = 500.0 + 0.1 * 200.0;
+    for north in (200..=800).step_by(50) {
+        let z = -(north as f32);
+        let edge = |x: f32| street_at(&world, x, z).expect("the street");
+        let (west, east) = (edge(200.0 - 2.5), edge(200.0 + 2.5));
+        assert!(
+            (west - east).abs() < 0.02,
+            "a tilted street at {north}: {west} west, {east} east"
+        );
+        assert!((west - level).abs() < 0.15, "the street at {west}");
+        // The ground beside it level with it, then back on the natural slope a little way out:
+        // cut into the hillside above, banked down below.
+        for x in [200.0 - 5.0, 200.0 + 5.0] {
+            let ground = ground_at(&world, x, z).expect("ground");
+            assert!(
+                (ground - level).abs() < 0.05,
+                "the ground beside the street at {x}, {north}: {ground}"
+            );
+        }
+        for x in [200.0 - 25.0, 200.0 + 25.0] {
+            let ground = ground_at(&world, x, z).expect("ground");
+            let natural = 500.0 + 0.1 * x;
+            assert!(
+                (ground - natural).abs() < 0.05,
+                "the ground away from the street at {x}, {north}: {ground}, not {natural}"
+            );
+        }
+    }
+}
+
 /// The railways' bed along its middle, as the mesh has it: (x, height, z) per point.
 fn rail_bed(world: &World) -> Vec<[f32; 3]> {
     world
@@ -571,17 +618,19 @@ async fn roundabouts_get_a_raised_island_with_a_kerb() {
     // How far the topmost ground lies over the natural slope (0.1 m per metre east).
     let lift = |x: f32, z: f32| top_of_ground(&world, x, z).map(|top| top - (500.0 + 0.1 * x));
 
-    // Inside the ring, the island stands 20 cm up; on the ring and outside, the ground is as
-    // it was.
+    // Inside the ring, the island stands 20 cm up from the ground (which the ring levels
+    // beside it, #116); on the ring and outside, the ground is as it was.
     for (x, z) in [
         (200.0, -500.0),
         (210.0, -505.0),
         (190.0, -492.0),
         (214.0, -500.0),
     ] {
-        let up = lift(x, z).expect("ground");
+        let top = top_of_ground(&world, x, z).expect("island");
+        let up = top - ground_at(&world, x, z).expect("ground");
         assert!((up - 0.2).abs() < 0.02, "island at {up} m at {x}, {z}");
     }
+    assert!(lift(200.0, -500.0).is_some_and(|up| (up - 0.2).abs() < 0.02));
     for (x, z) in [
         (220.0, -500.0),
         (230.0, -500.0),
@@ -722,6 +771,27 @@ async fn railway_tunnels_under_the_road_stay_below_it() {
         arch > 497.0 + 4.5,
         "the arch only reaches {arch} away from the road"
     );
+}
+
+#[tokio::test]
+async fn a_railway_bridge_mapped_on_its_own_is_kept() {
+    // #116: a bridge between switches, joining no line of its own; with no track on the
+    // ground to take its height from, it was left out. Its ends stand on the hillside, here
+    // at 520 m.
+    let world = world(&MapData {
+        railways: vec![railway(
+            &[(200.0, 300.0), (200.0, 500.0)],
+            Some(StructureKind::Bridge),
+        )],
+        ..MapData::default()
+    })
+    .await;
+
+    let bed = rail_bed(&world);
+    assert!(bed.len() > 10, "{} points of track", bed.len());
+    for point in &bed {
+        assert!((point[1] - 520.0).abs() < 0.1, "the track at {point:?}");
+    }
 }
 
 #[tokio::test]
@@ -2384,7 +2454,8 @@ async fn streams_run_in_channels_and_pass_under_roads_and_streets() {
                 culvert || water > ground,
                 "water {water} under ground {ground} at {x}, {z}"
             );
-            if x.abs() > LEVEL_REACH as f32 {
+            // Away from the road and the street, which level the land across them (#116).
+            if x.abs() > LEVEL_REACH as f32 && (x - 100.0).abs() > 20.0 {
                 assert!(
                     (water - (land - 0.48)).abs() < 0.05,
                     "water {water} by land at {land} at {x}, {z}"
@@ -2476,6 +2547,91 @@ async fn bridges_of_other_streets_stand_on_piers() {
     }
     // Five piers, 20 m apart, four corners each at the bottom.
     assert!(piers >= 16, "{piers} pier corners on the valley floor");
+}
+
+#[tokio::test]
+async fn a_bridge_cut_by_a_tile_border_is_one_deck_between_its_ends() {
+    use torqa_osm::{Road, RoadClass};
+
+    // #116, #117: a street bridge over a valley 20 m deep, cut in the middle by a tile border
+    // as the map tiles have it (the two pieces' ends a few decimetres apart). Each piece got a
+    // deck down to the valley floor at the cut.
+    struct Ravine;
+    impl ElevationModel for Ravine {
+        fn elevation(
+            &mut self,
+            _lat: f64,
+            lon: f64,
+        ) -> impl std::future::Future<Output = Result<f64, String>> + Send {
+            let east = (lon - 7.0) * METERS_PER_DEGREE * 46f64.to_radians().cos();
+            std::future::ready(Ok(if (150.0..250.0).contains(&east) {
+                480.0
+            } else {
+                500.0
+            }))
+        }
+    }
+    let piece = |from: (f64, f64), to: (f64, f64)| Road {
+        class: RoadClass::Street,
+        line: vec![at(from.0, from.1), at(to.0, to.1)],
+        structure: Some(StructureKind::Bridge),
+    };
+    let route = route_north(&[]).await;
+    let map = MapData {
+        roads: vec![
+            piece((100.0, 600.0), (200.0, 600.0)),
+            // Drawn the other way round.
+            piece((300.0, 600.0), (200.0, 600.3)),
+        ],
+        ..MapData::default()
+    };
+    let world = generate(&route, &mut Ravine, &map, &mut |_, _| {}).await;
+
+    let mut deck = 0;
+    for chunk in &world.chunks {
+        for v in &chunk.streets.vertices {
+            let (x, y, z) = (v[0] + chunk.center[0], v[1], v[2] + chunk.center[2]);
+            if !(160.0..=240.0).contains(&x) || (z + 600.0).abs() > 5.0 {
+                continue;
+            }
+            // Over the valley floor only the deck at its ends' height (its top and the bottom
+            // of its sides) and the piers' feet: nothing in between.
+            assert!(!(481.0..499.0).contains(&y), "the deck dips to {y} at {x}");
+            if y > 499.9 {
+                deck += 1;
+            }
+        }
+    }
+    assert!(deck > 10, "{deck} deck vertices over the valley");
+}
+
+#[test]
+fn pieces_of_a_way_join_end_to_end_but_not_at_junctions() {
+    // #116: a way cut by tile borders, its pieces' ends a few decimetres apart where the tiles
+    // cut it, one piece drawn the other way round; at its end two others meet it.
+    let west = [(0.0, 0.0), (100.0, 0.0)];
+    let middle = [(200.0, 0.0), (100.2, 0.3)];
+    let east = [(200.0, 0.0), (300.0, 0.0)];
+    let branch = [(300.0, 0.0), (300.0, 100.0)];
+    let beyond = [(300.0, 0.0), (400.0, 0.0)];
+    let lines: Vec<&[(f64, f64)]> = [&west, &middle, &east, &branch, &beyond]
+        .into_iter()
+        .map(<[(f64, f64); 2]>::as_slice)
+        .collect();
+
+    assert_eq!(
+        crate::chains::chains(&lines, &|_, _| true),
+        vec![
+            vec![(0, false), (1, true), (2, false)],
+            vec![(3, false)],
+            vec![(4, false)],
+        ]
+    );
+    // Pieces that do not go together (another kind of way) stay apart.
+    assert_eq!(
+        crate::chains::chains(&lines[..3], &|first, second| first + second != 1),
+        vec![vec![(0, false)], vec![(2, true), (1, false)]]
+    );
 }
 
 #[tokio::test]

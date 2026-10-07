@@ -4,16 +4,17 @@
 //! crossing the road run up to it and under it, so junctions look joined; bridges are straight
 //! decks between their ends; tunnels stay under the ground.
 
+use std::collections::HashMap;
+
 use torqa_osm::{MapData, RoadClass, StructureKind};
 use torqa_routes::{ElevationModel, LocalProjection};
 
-use crate::drape;
 use crate::junctions::{self, Corner};
 use crate::railways::{self, Railway};
 use crate::road::{Mouth, RoadIndex};
 use crate::structures::Below;
 use crate::water::{self, Pool};
-use crate::{HeightGrid, MeshData, On, ROAD_HALF_WIDTH};
+use crate::{HeightGrid, MeshData, On, ROAD_HALF_WIDTH, chains, drape};
 
 /// Distance between the points of a street: short enough to tell where it runs along the road
 /// ridden and to keep plants off it.
@@ -100,31 +101,58 @@ fn paved(class: RoadClass) -> bool {
     )
 }
 
-/// The map's streets around the route, densified, with bridge decks' end heights from `model`.
-/// Tunnels are left out: draped on the ground, they would run over the mountain.
+/// The map's streets around the route, their pieces joined end to end where they go on as one
+/// way of a kind (`chains`), densified, with bridge decks' end heights from `model`: a bridge
+/// cut by a tile border is one deck between its real ends, not two dipping to the ground where
+/// the tiles cut them, crossing each other (#116, #117). Tunnels are left out: draped on the
+/// ground, they would run over the mountain.
 pub(crate) async fn lines<M: ElevationModel>(
     map: &MapData,
     projection: &LocalProjection,
     model: &mut M,
 ) -> Vec<Street> {
+    let projected: Vec<Vec<(f64, f64)>> = map
+        .roads
+        .iter()
+        .map(|road| {
+            road.line
+                .iter()
+                .map(|&(lat, lon)| projection.project(lat, lon))
+                .collect()
+        })
+        .collect();
+    let pieces: Vec<&[(f64, f64)]> = projected.iter().map(Vec::as_slice).collect();
+    let alike = |first: usize, second: usize| {
+        let (first, second) = (&map.roads[first], &map.roads[second]);
+        first.class == second.class && first.structure == second.structure
+    };
+    let joined = chains::chains(&pieces, &alike);
     let mut streets = Vec::new();
-    for (index, road) in map.roads.iter().enumerate() {
+    for (index, chain) in joined.into_iter().enumerate() {
+        let road = &map.roads[chain[0].0];
         if road.structure == Some(StructureKind::Tunnel) {
             continue;
         }
-        let line: Vec<(f64, f64)> = road
-            .line
-            .iter()
-            .map(|&(lat, lon)| projection.project(lat, lon))
-            .collect();
+        let mut line: Vec<(f64, f64)> = Vec::new();
+        for &(piece, reversed) in &chain {
+            let mut points = projected[piece].clone();
+            if reversed {
+                points.reverse();
+            }
+            // Joined pieces share their end points.
+            let skip = usize::from(!line.is_empty());
+            line.extend(points.into_iter().skip(skip));
+        }
         let points = drape::densify(&line, STEP_M);
-        let Some(&first) = points.first() else {
+        let (Some(&first), Some(&last)) = (line.first(), line.last()) else {
             continue;
         };
         let deck = if road.structure == Some(StructureKind::Bridge) {
-            let mut end = async |(lat, lon): (f64, f64)| model.elevation(lat, lon).await.ok();
-            let (start, finish) = (road.line[0], road.line[road.line.len() - 1]);
-            match (end(start).await, end(finish).await) {
+            let mut end = async |(east, north): (f64, f64)| {
+                let (lat, lon) = projection.unproject(east, north);
+                model.elevation(lat, lon).await.ok()
+            };
+            match (end(first).await, end(last).await) {
                 (Some(a), Some(b)) => Some((a, b)),
                 // Without the ground's heights a deck cannot be placed.
                 _ => continue,
@@ -411,5 +439,101 @@ fn clearance_cell(east: f64, north: f64) -> (i64, i64) {
     (
         (east / CLEARANCE_CELL_M).floor() as i64,
         (north / CLEARANCE_CELL_M).floor() as i64,
+    )
+}
+
+/// Paved streets are level across, as built (#116): the ground under them and this far beyond
+/// their edges lies at the natural ground's height at their centre line, so every triangle of
+/// the fine ground they lie on is level across (the diagonal of a fine piece, and a little)...
+pub(crate) const LEVEL_VERGE_M: f64 = crate::FINE * std::f64::consts::SQRT_2 + 0.2;
+/// ...beyond, it is cut into the hillside or banked down to the natural ground, natural again
+/// this far out, blending into it over the last `LEVEL_FADE_M`.
+pub(crate) const LEVEL_REACH_M: f64 = 8.0;
+pub(crate) const LEVEL_FADE_M: f64 = 3.0;
+/// Index cell size of [`Levels`].
+const LEVEL_CELL_M: f64 = 20.0;
+
+/// The paved streets on the ground, which level the ground across them (#116). Tracks and
+/// paths follow the land as it is; bridges stand above it.
+pub(crate) struct Levels {
+    /// Pieces of their centre lines, with their half widths.
+    segments: Vec<((f64, f64), (f64, f64), f64)>,
+    cells: HashMap<(i64, i64), Vec<usize>>,
+}
+
+impl Levels {
+    pub(crate) fn new(streets: &[Street]) -> Self {
+        let mut segments = Vec::new();
+        let mut cells: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+        for street in streets.iter().filter(|s| s.paved() && !s.on_bridge()) {
+            let half = street.half_width();
+            for pair in street.points.windows(2) {
+                let index = segments.len();
+                segments.push((pair[0], pair[1], half));
+                // Pieces are at most a step long: both ends' cells cover them.
+                let (first, second) = (level_cell(pair[0]), level_cell(pair[1]));
+                cells.entry(first).or_default().push(index);
+                if second != first {
+                    cells.entry(second).or_default().push(index);
+                }
+            }
+        }
+        Self { segments, cells }
+    }
+
+    /// The paved street whose edge lies nearest to (`east`, `north`), if that is within its
+    /// levelled ground (`LEVEL_VERGE_M` and `LEVEL_REACH_M` beyond its edge) and `extra`
+    /// metres more: the distance from its centre line, its half width and the nearest point of
+    /// its centre line.
+    pub(crate) fn nearest(
+        &self,
+        east: f64,
+        north: f64,
+        extra: f64,
+    ) -> Option<(f64, f64, (f64, f64))> {
+        let reach = LEVEL_VERGE_M + LEVEL_REACH_M + extra;
+        // The widest street's centre, and a piece's far end a step beyond its nearest point.
+        let scan = reach + width(RoadClass::Major) / 2.0 + STEP_M;
+        let (low, high) = (
+            level_cell((east - scan, north - scan)),
+            level_cell((east + scan, north + scan)),
+        );
+        // How far beyond its edge, how far from its centre line, its half width, the nearest
+        // point of its centre line.
+        let mut best: Option<(f64, f64, f64, (f64, f64))> = None;
+        for x in low.0..=high.0 {
+            for y in low.1..=high.1 {
+                for &index in self.cells.get(&(x, y)).into_iter().flatten() {
+                    let (from, to, half) = self.segments[index];
+                    let foot = nearest_on(from, to, (east, north));
+                    let distance = (east - foot.0).hypot(north - foot.1);
+                    let beyond = distance - half;
+                    if beyond <= reach && best.is_none_or(|b| beyond < b.0) {
+                        best = Some((beyond, distance, half, foot));
+                    }
+                }
+            }
+        }
+        best.map(|(_, distance, half, foot)| (distance, half, foot))
+    }
+}
+
+/// The point of segment `from`–`to` nearest to `point`.
+fn nearest_on(from: (f64, f64), to: (f64, f64), point: (f64, f64)) -> (f64, f64) {
+    let (de, dn) = (to.0 - from.0, to.1 - from.1);
+    let length_squared = de * de + dn * dn;
+    if length_squared < 1e-12 {
+        return from;
+    }
+    let share =
+        (((point.0 - from.0) * de + (point.1 - from.1) * dn) / length_squared).clamp(0.0, 1.0);
+    (from.0 + de * share, from.1 + dn * share)
+}
+
+#[allow(clippy::cast_possible_truncation)] // local metres stay far below 2^63 cells
+fn level_cell((east, north): (f64, f64)) -> (i64, i64) {
+    (
+        (east / LEVEL_CELL_M).floor() as i64,
+        (north / LEVEL_CELL_M).floor() as i64,
     )
 }

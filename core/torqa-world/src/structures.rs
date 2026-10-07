@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 use torqa_routes::{ElevationModel, LocalProjection, Surface};
 
 use crate::road::{CentrePoint, Plane, RoadIndex, TunnelRun};
-use crate::streets::Street;
+use crate::streets::{Levels, Street};
 use crate::{LEVEL_REACH, MeshData, ROAD_HALF_WIDTH, Shapers, palette, railways, shape};
 
 static CONCRETE: LazyLock<[f32; 4]> = LazyLock::new(|| palette::srgb("structure.concrete", 0.0));
@@ -225,6 +225,7 @@ impl Portal {
 pub(crate) async fn open_portals<M: ElevationModel>(
     road: &mut RoadIndex,
     rails: &mut RoadIndex,
+    streets: &Levels,
     projection: &LocalProjection,
     model: &mut M,
 ) -> Vec<Portal> {
@@ -244,6 +245,7 @@ pub(crate) async fn open_portals<M: ElevationModel>(
             road: &*road,
             rails: &*rails,
             portals: &[],
+            streets,
         };
         for run in &road_runs {
             road_openings.push(open_ends(run, &shapers, projection, model).await);
@@ -343,12 +345,12 @@ async fn ground<M: ElevationModel>(
 /// Geometry of the bridges and tunnels of the road ridden and the railways, in route
 /// coordinates, with headwalls at the tunnels' `portals`.
 pub(crate) async fn build_all<M: ElevationModel>(
-    (road, railways): (&RoadIndex, &RoadIndex),
+    shapers: &Shapers<'_>,
     below: &Below<'_>,
-    portals: &[Portal],
     projection: &LocalProjection,
     model: &mut M,
 ) -> MeshData {
+    let (road, railways, portals) = (shapers.road, shapers.rails, shapers.portals);
     let mut mesh = MeshData::default();
     let own = road
         .structure_runs()
@@ -363,11 +365,6 @@ pub(crate) async fn build_all<M: ElevationModel>(
             Surface::Tunnel => {
                 let over = over.map(|road| (road, projection, &mut *model));
                 tunnel(&mut mesh, &run, over).await;
-                let shapers = Shapers {
-                    road,
-                    rails: railways,
-                    portals,
-                };
                 for (end, outward) in [(run.first(), -1.0), (run.last(), 1.0)] {
                     let Some(&end) = end else {
                         continue;
@@ -376,7 +373,7 @@ pub(crate) async fn build_all<M: ElevationModel>(
                         .iter()
                         .any(|p| distance(p.plane.0, end.centre.position) < 1.0);
                     if at_portal {
-                        headwall(&mut mesh, end, outward, &shapers, projection, model).await;
+                        headwall(&mut mesh, end, outward, shapers, projection, model).await;
                     }
                 }
             }
