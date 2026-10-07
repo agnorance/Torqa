@@ -198,13 +198,14 @@ pub struct World {
 async fn whole<M: ElevationModel>(
     map: &MapData,
     projection: &LocalProjection,
-    (road, ways, below): (&RoadIndex, &Ways, &structures::Below<'_>),
+    (shapers, ways, below): (&Shapers<'_>, &Ways, &structures::Below<'_>),
     model: &mut M,
 ) -> World {
-    let rails = &ways.network.index;
+    let (road, rails) = (shapers.road, shapers.rails);
     World {
         road: road.mesh(ROAD_HALF_WIDTH, &streets::mouths(&ways.streets, road)),
-        structures: structures::build_all(road, rails, below, projection, model).await,
+        structures: structures::build_all((road, rails), below, shapers.portals, projection, model)
+            .await,
         railways: rails.mesh(railways::BED_M / 2.0, &[]),
         minimap: minimap::build(map, projection, road),
         ..World::default()
@@ -221,14 +222,16 @@ pub async fn generate<M: ElevationModel>(
     progress: &mut (dyn FnMut(usize, usize) + Send),
 ) -> World {
     let projection = LocalProjection::for_route(route);
-    let road = RoadIndex::new(route, &projection);
+    let mut road = RoadIndex::new(route, &projection);
     let cells = chunks_near_route(&road);
     let total = cells.len();
     // Announce the step before the slower preparation below.
     progress(0, total);
     let land = LandIndex::new(&map.areas, &projection);
     let buildings = buildings_by_chunk(map, &projection, &road, &land);
-    let ways = Ways::new(map, &projection, &road, model).await;
+    let mut ways = Ways::new(map, &projection, &road, model).await;
+    let portals =
+        structures::open_portals(&mut road, &mut ways.network.index, &projection, model).await;
     let Ways {
         streets,
         streams,
@@ -238,9 +241,10 @@ pub async fn generate<M: ElevationModel>(
     let shapers = Shapers {
         road: &road,
         rails: &ways.network.index,
+        portals: &portals,
     };
     let below = structures::Below::new(&road, &ways.network.index, streets);
-    let mut world = whole(map, &projection, (&road, &ways, &below), model).await;
+    let mut world = whole(map, &projection, (&shapers, &ways, &below), model).await;
 
     for (done, (cx, cn)) in cells.into_iter().enumerate() {
         let heights = HeightGrid::sample(
@@ -547,6 +551,14 @@ impl HeightGrid {
     fn needs_detail(&self, i: usize, j: usize, shapers: &Shapers<'_>) -> bool {
         let half_diagonal = GRID * std::f64::consts::FRAC_1_SQRT_2;
         let (east, north) = self.position(i, j, 0.5, 0.5);
+        // At a tunnel portal the cutting ends: the ground steps up to the hill there.
+        if shapers
+            .portals
+            .iter()
+            .any(|p| p.near(east, north, half_diagonal + FINE))
+        {
+            return true;
+        }
         let roads: Vec<_> = shapers
             .near(east, north, LEVEL_REACH + half_diagonal)
             .into_iter()
@@ -834,6 +846,22 @@ impl HeightGrid {
         }
         for j in 0..side - 1 {
             for i in 0..side - 1 {
+                let (east, north) = self.position(i, j, 0.5, 0.5);
+                let portals: Vec<&structures::Portal> = shapers
+                    .portals
+                    .iter()
+                    .filter(|p| p.near(east, north, GRID))
+                    .collect();
+                // A piece's two triangles from its corners (index, [east, north, height]), but
+                // none reaching into a tunnel's opening.
+                let add = |mesh: &mut MeshData, corners: [(u32, [f64; 3]); 4]| {
+                    let [sw, se, nw, ne] = corners;
+                    for triangle in [[sw, nw, ne], [sw, ne, se]] {
+                        if !in_opening(&portals, triangle.map(|c| c.1)) {
+                            mesh.indices.extend(triangle.map(|c| c.0));
+                        }
+                    }
+                };
                 if let Some(fine) = self.fine.get(&(i, j)) {
                     let mut corners = Vec::with_capacity((SUB + 1) * (SUB + 1));
                     for b in 0..=SUB {
@@ -841,26 +869,53 @@ impl HeightGrid {
                             #[allow(clippy::cast_precision_loss)]
                             let (east, north) =
                                 self.position(i, j, a as f64 / SUB as f64, b as f64 / SUB as f64);
-                            corners.push(push(&mut mesh, east, north, fine[b * (SUB + 1) + a]));
+                            let height = fine[b * (SUB + 1) + a];
+                            corners.push((
+                                push(&mut mesh, east, north, height),
+                                [east, north, height],
+                            ));
                         }
                     }
                     for b in 0..SUB {
                         for a in 0..SUB {
                             let at = |a: usize, b: usize| corners[b * (SUB + 1) + a];
-                            let (sw, se, nw, ne) =
-                                (at(a, b), at(a + 1, b), at(a, b + 1), at(a + 1, b + 1));
-                            mesh.indices.extend([sw, nw, ne, sw, ne, se]);
+                            add(
+                                &mut mesh,
+                                [at(a, b), at(a + 1, b), at(a, b + 1), at(a + 1, b + 1)],
+                            );
                         }
                     }
                 } else {
-                    let at = |i: usize, j: usize| grid[j * side + i];
-                    let (sw, se, nw, ne) = (at(i, j), at(i + 1, j), at(i, j + 1), at(i + 1, j + 1));
-                    mesh.indices.extend([sw, nw, ne, sw, ne, se]);
+                    let at = |i: usize, j: usize| {
+                        let (east, north) = self.position(i, j, 0.0, 0.0);
+                        (
+                            grid[j * side + i],
+                            [east, north, self.vertex(i as isize, j as isize)],
+                        )
+                    };
+                    add(
+                        &mut mesh,
+                        [at(i, j), at(i + 1, j), at(i, j + 1), at(i + 1, j + 1)],
+                    );
                 }
             }
         }
         mesh
     }
+}
+
+/// Whether a triangle of the ground (corners east, north, height) reaches into the opening of a
+/// tunnel at one of `portals`: it is left out, so nothing closes the opening (#135).
+fn in_opening(portals: &[&structures::Portal], [a, b, c]: [[f64; 3]; 3]) -> bool {
+    if portals.is_empty() {
+        return false;
+    }
+    let between = |p: [f64; 3], q: [f64; 3]| [0, 1, 2].map(|k| f64::midpoint(p[k], q[k]));
+    let centre = [0, 1, 2].map(|k| (a[k] + b[k] + c[k]) / 3.0);
+    let probes = [a, b, c, between(a, b), between(b, c), between(c, a), centre];
+    portals
+        .iter()
+        .any(|portal| probes.iter().any(|&probe| portal.hollow(probe)))
 }
 
 /// How far channels cut the ground at a point (`channels::Channels::depth`).
@@ -889,10 +944,12 @@ fn on_triangles(sw: f64, se: f64, nw: f64, ne: f64, u: f64, v: f64) -> f64 {
 }
 
 /// What shapes the ground: the road ridden and the railways (`railways`), each level across just
-/// below it, with cuttings and embankments.
+/// below it, with cuttings and embankments, and the portals of their tunnels, where those
+/// cuttings end and the ground keeps out of the openings (#135).
 pub(crate) struct Shapers<'a> {
     pub(crate) road: &'a RoadIndex,
     pub(crate) rails: &'a RoadIndex,
+    pub(crate) portals: &'a [structures::Portal],
 }
 
 impl Shapers<'_> {

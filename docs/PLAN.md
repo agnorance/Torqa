@@ -295,6 +295,10 @@ the realistic look's textures and patterns were replaced step by step.
     - [x] Bridges and viaducts: short, low bridges of the road ridden are stone arch bridges
       (arches, the walls over them, vaults), longer and higher ones viaducts on piers as wide
       as the deck; bridges of other streets and railways stand on piers too
+    - [x] Tunnel portals (#135): a tunnel's tube starts where the ground rises over it, not
+      in the open in front of the hill; there a stone headwall stands around the opening at
+      the end of the cutting leading to it, no ground closes the opening, and the hill over
+      the tunnel stays as it is (road ridden and railways)
   - [x] Fixes from a ride round the Bielersee (#98–#101):
     - [x] Roads stay clear of buildings (#100): none reaches into the road ridden by a corner
       or a wall, and none stands across a paved street on the ground

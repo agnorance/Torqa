@@ -28,10 +28,17 @@ const FAN_STEP: f64 = 0.4;
 /// back the other way (past the turn) or this far further on (as in `torqa_routes`).
 const SAME_ROAD: f64 = 3.0;
 const APART: f64 = 40.0;
+/// Open line this far before a tunnel portal leads into its cutting, which ends in the portal's
+/// plane.
+const APPROACH: f64 = 60.0;
 
 /// Where another street meets the road: distance along the road, side (1 right of travel, −1
 /// left) and the street's half width.
 pub(crate) type Mouth = (f64, f64, f64);
+
+/// A tunnel portal's plane, square to the line: a point of it on the line and the unit
+/// direction into the tunnel (east, north).
+pub(crate) type Plane = ((f64, f64), (f64, f64));
 
 #[derive(Debug, Clone, Copy)]
 struct Segment {
@@ -48,6 +55,9 @@ struct Segment {
     surface: Surface,
     /// The route rides this stretch of road a second time: it is drawn by the first pass.
     repeat: bool,
+    /// The planes of the tunnel portals this open stretch leads to, ahead and behind
+    /// ([`RoadIndex::set_portals`]).
+    portals: [Option<Plane>; 2],
 }
 
 /// A point of a centre line.
@@ -134,6 +144,7 @@ impl RoadIndex {
                 distance_a: w[0].distance,
                 distance_b: w[1].distance,
                 repeat: false,
+                portals: [None; 2],
                 // A segment touching a bridge or tunnel belongs to it.
                 surface: if w[0].surface == Surface::Ground {
                     w[1].surface
@@ -402,6 +413,115 @@ impl RoadIndex {
         runs
     }
 
+    /// The tunnels of the lines, each as one run of segments.
+    pub(crate) fn tunnels(&self) -> Vec<TunnelRun> {
+        let mut runs = Vec::new();
+        for line in &self.lines {
+            let mut k = line.start;
+            while k < line.end {
+                if self.segments[k].surface != Surface::Tunnel {
+                    k += 1;
+                    continue;
+                }
+                let start = k;
+                while k < line.end && self.segments[k].surface == Surface::Tunnel {
+                    k += 1;
+                }
+                let run = &self.segments[start..k];
+                let mut points: Vec<CentrePoint> = run
+                    .iter()
+                    .map(|s| centre_point(s, s.a, s.elevation_a))
+                    .collect();
+                let last = &run[run.len() - 1];
+                points.push(centre_point(last, last.b, last.elevation_b));
+                runs.push(TunnelRun {
+                    segments: start..k,
+                    line: line.clone(),
+                    points,
+                    open: (start > line.start, k < line.end),
+                });
+            }
+        }
+        runs
+    }
+
+    /// Opens the first `start` and last `end` segments of a tunnel `run` (from
+    /// [`RoadIndex::tunnels`], before any is opened) onto the ground, where it has not yet
+    /// entered the hill (#135), and gives the open line leading to each end its portal's plane:
+    /// the cutting it lies in ends there instead of rounding off into the hill over the tunnel.
+    /// `None` leaves the tunnel as it is, without portals. Returns the portals: their plane,
+    /// the line's height there and how steeply it rises into the tunnel.
+    pub(crate) fn set_portals(
+        &mut self,
+        run: &TunnelRun,
+        opened: Option<(usize, usize)>,
+    ) -> Vec<(Plane, f64, f64)> {
+        let (first, last) = (run.segments.start, run.segments.end);
+        // Planes set before, for the line as mapped, give way.
+        for segment in self.segments[run.line.start..first]
+            .iter_mut()
+            .rev()
+            .take_while(|s| s.surface != Surface::Tunnel)
+        {
+            segment.portals[0] = None;
+        }
+        for segment in self.segments[last..run.line.end]
+            .iter_mut()
+            .take_while(|s| s.surface != Surface::Tunnel)
+        {
+            segment.portals[1] = None;
+        }
+        let Some((start, end)) = opened else {
+            return Vec::new();
+        };
+        let (first, last) = (first + start, last - end);
+        for segment in &mut self.segments[run.segments.start..first] {
+            segment.surface = Surface::Ground;
+        }
+        for segment in &mut self.segments[last..run.segments.end] {
+            segment.surface = Surface::Ground;
+        }
+        let mut portals = Vec::new();
+        if run.open.0 {
+            let inside = self.segments[first];
+            let plane = (inside.a, direction(&inside));
+            let rise = (inside.elevation_b - inside.elevation_a) / length(&inside).max(1e-9);
+            portals.push((plane, inside.elevation_a, rise));
+            let mut along = 0.0;
+            for segment in self.segments[run.line.start..first].iter_mut().rev() {
+                along += length(segment);
+                if segment.surface != Surface::Ground
+                    || along > APPROACH
+                    || behind(plane, segment.a)
+                    || behind(plane, segment.b)
+                {
+                    break;
+                }
+                segment.portals[0] = Some(plane);
+            }
+        }
+        if run.open.1 {
+            let inside = self.segments[last - 1];
+            let (de, dn) = direction(&inside);
+            let plane = (inside.b, (-de, -dn));
+            let rise = (inside.elevation_a - inside.elevation_b) / length(&inside).max(1e-9);
+            portals.push((plane, inside.elevation_b, rise));
+            let mut along = 0.0;
+            for segment in &mut self.segments[last..run.line.end] {
+                along += length(segment);
+                if segment.surface != Surface::Ground
+                    || along > APPROACH
+                    || behind(plane, segment.a)
+                    || behind(plane, segment.b)
+                {
+                    break;
+                }
+                segment.portals[1] = Some(plane);
+            }
+        }
+        portals
+    }
+
     /// A ribbon `2 × half_width` wide along the centre line, its edges bevelled down to the
     /// ground and skirts hanging on below. Texture coordinates: `u` 0–1 across the road (below
     /// 0 and above 1 on bevels and skirts, which are shoulders — except where another street
@@ -601,6 +721,18 @@ fn distance(a: (f64, f64), b: (f64, f64)) -> f64 {
     (b.0 - a.0).hypot(b.1 - a.1)
 }
 
+/// A tunnel of one of the lines, as [`RoadIndex::tunnels`] finds it.
+pub(crate) struct TunnelRun {
+    /// Its segments, and those of its line.
+    segments: std::ops::Range<usize>,
+    line: std::ops::Range<usize>,
+    /// Its centre line: each segment's start and the last one's end.
+    pub(crate) points: Vec<CentrePoint>,
+    /// Whether open line leads into it at its start and out of it at its end, rather than the
+    /// line beginning or ending in it.
+    pub(crate) open: (bool, bool),
+}
+
 /// A point on the road's centre line with its direction of travel.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CentrePoint {
@@ -636,5 +768,33 @@ fn closest_on_segment(segment: &Segment, east: f64, north: f64) -> (f64, f64, Su
     };
     let (pe, pn) = (segment.a.0 + de * t, segment.a.1 + dn * t);
     let elevation = segment.elevation_a + (segment.elevation_b - segment.elevation_a) * t;
-    ((east - pe).hypot(north - pn), elevation, segment.surface)
+    // Past a portal the line is in its tunnel, so the ground there is the hill's (#135).
+    let past = segment
+        .portals
+        .iter()
+        .flatten()
+        .any(|&plane| behind(plane, (east, north)));
+    let surface = if past {
+        Surface::Tunnel
+    } else {
+        segment.surface
+    };
+    ((east - pe).hypot(north - pn), elevation, surface)
+}
+
+/// Whether `point` lies past a portal's `plane`, on the tunnel's side.
+fn behind(((pe, pn), (de, dn)): Plane, (east, north): (f64, f64)) -> bool {
+    (east - pe) * de + (north - pn) * dn > 1e-9
+}
+
+fn length(segment: &Segment) -> f64 {
+    distance(segment.a, segment.b)
+}
+
+fn centre_point(segment: &Segment, position: (f64, f64), elevation: f64) -> CentrePoint {
+    CentrePoint {
+        position,
+        elevation,
+        direction: direction(segment),
+    }
 }
