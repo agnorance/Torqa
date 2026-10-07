@@ -149,8 +149,8 @@ pub(crate) async fn lines<M: ElevationModel>(
         };
         let deck = if road.structure == Some(StructureKind::Bridge) {
             let mut end = async |(east, north): (f64, f64)| {
-                let (lat, lon) = projection.unproject(east, north);
-                model.elevation(lat, lon).await.ok()
+                let (latitude, longitude) = projection.unproject(east, north);
+                model.elevation(latitude, longitude).await.ok()
             };
             match (end(first).await, end(last).await) {
                 (Some(a), Some(b)) => Some((a, b)),
@@ -453,11 +453,15 @@ pub(crate) const LEVEL_FADE_M: f64 = 3.0;
 /// Index cell size of [`Levels`].
 const LEVEL_CELL_M: f64 = 20.0;
 
+/// A piece of a street's centre line, metres east/north: its two ends and the street's half
+/// width.
+type Piece = ((f64, f64), (f64, f64), f64);
+
 /// The paved streets on the ground, which level the ground across them (#116). Tracks and
 /// paths follow the land as it is; bridges stand above it.
 pub(crate) struct Levels {
     /// Pieces of their centre lines, with their half widths.
-    segments: Vec<((f64, f64), (f64, f64), f64)>,
+    segments: Vec<Piece>,
     cells: HashMap<(i64, i64), Vec<usize>>,
 }
 

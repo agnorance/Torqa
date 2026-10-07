@@ -222,6 +222,7 @@ async fn whole<M: ElevationModel>(
 /// Builds the world for `route`, sampling heights from `model` (e.g. the terrain tiles) and
 /// placing `map` features. Where the model has no data, the terrain follows the road.
 /// `progress` is called with (chunks done, chunks total).
+#[allow(clippy::too_many_lines)] // one pass over the chunks, each step of it named in order
 pub async fn generate<M: ElevationModel>(
     route: &Route,
     model: &mut M,

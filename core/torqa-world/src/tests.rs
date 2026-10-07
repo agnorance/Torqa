@@ -1718,11 +1718,9 @@ async fn buildings_drawn_into_the_road_are_left_out() {
     })
     .await;
 
-    assert!(
-        building_faces(&world, (8.5, 500.0), 7.0).is_empty(),
-        "a house drawn on the road"
-    );
-    assert!(!building_faces(&world, (30.0, 500.0), 7.0).is_empty());
+    let faces = |east: f32| building_faces(&world, (east, 500.0), 7.0).len();
+    assert_eq!(faces(8.5), 0, "a house drawn on the road");
+    assert!(faces(30.0) > 0, "the house off the road is gone");
 }
 
 #[tokio::test]
@@ -3270,9 +3268,9 @@ async fn castles_and_lighthouses_from_the_map_get_their_models() {
         .filter(|m| m.model.starts_with("lighthouse_"))
         .collect();
     assert_eq!(lighthouses.len(), 2, "two lighthouses");
-    assert!(lighthouses.iter().any(|m| near(*m, (80.0, 700.0))));
+    assert!(lighthouses.iter().any(|m| near(m, (80.0, 700.0))));
     assert!(
-        lighthouses.iter().any(|m| near(*m, (-60.0, 500.0))),
+        lighthouses.iter().any(|m| near(m, (-60.0, 500.0))),
         "the lighthouse without an outline stands on its own"
     );
     // Round towers are not stretched out of round.
@@ -3380,12 +3378,13 @@ async fn the_subtropics_grow_palms_and_build_houses_for_the_heat() {
     let plateau = forest_and_houses((46.95, 7.44)).await;
 
     // Palms among the broadleaf trees, banana plants and tropical shrubs, but no conifers.
-    assert!(!plants_of(&ishigaki, &["palm"]).is_empty(), "no palms");
-    assert!(!plants_of(&ishigaki, &["broadleaf"]).is_empty());
-    assert!(plants_of(&ishigaki, &["conifer", "bush"]).is_empty());
+    let count = |world: &World, kinds: &[&str]| plants_of(world, kinds).len();
+    assert!(count(&ishigaki, &["palm"]) > 0, "no palms");
+    assert!(count(&ishigaki, &["broadleaf"]) > 0, "no broadleaf trees");
+    assert_eq!(count(&ishigaki, &["conifer", "bush"]), 0);
     // At home conifers and bushes as before, nothing tropical.
-    assert!(!plants_of(&plateau, &["conifer"]).is_empty());
-    assert!(plants_of(&plateau, &["palm", "banana", "tropical_bush"]).is_empty());
+    assert!(count(&plateau, &["conifer"]) > 0, "no conifers");
+    assert_eq!(count(&plateau, &["palm", "banana", "tropical_bush"]), 0);
 
     // Houses with flat roofs or low red-tiled ones on Ishigaki, the usual houses at home.
     let models =
