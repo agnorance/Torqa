@@ -463,8 +463,9 @@ def gable_roof(mesh, rect, eaves, pitch_deg, overhang, verge, roof="tiles", unde
 
 
 def hipped_roof(mesh, rect, eaves, pitch_deg, overhang, roof="tiles", under="wood",
-                fascia="wood", thickness=0.25):
-    """A hipped roof over walls `rect`: four slopes up to a ridge along x. Returns its height."""
+                fascia="wood", thickness=0.25, caps=None):
+    """A hipped roof over walls `rect`: four slopes up to a ridge along x; `caps` names the
+    ridge and hip caps' material if it is not the roof's. Returns its height."""
     l, w = rect.length / 2.0, rect.width / 2.0
     slope = math.tan(math.radians(pitch_deg))
     ridge = eaves + w * slope
@@ -492,11 +493,11 @@ def hipped_roof(mesh, rect, eaves, pitch_deg, overhang, roof="tiles", under="woo
     # Ridge and hip caps.
     if half_ridge > 1e-3:
         mesh.beam((-half_ridge, 0.0, ridge + t + 0.03), (half_ridge, 0.0, ridge + t + 0.03), 0.28,
-                  0.12, roof)
+                  0.12, caps or roof)
     for sx in (-1.0, 1.0):
         for sy in (-1.0, 1.0):
             mesh.beam((sx * lr, sy * wr, edge + t + 0.03), (sx * half_ridge, 0.0, ridge + t + 0.03),
-                      0.24, 0.1, roof)
+                      0.24, 0.1, caps or roof)
     return ridge + t
 
 

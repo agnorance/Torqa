@@ -23,8 +23,9 @@ Working today:
   resistance; heart-rate straps; the devices used last reconnect at start
 - GPX import with terrain-corrected elevation, auto-detected climbs
 - Stylized, faceted 3D worlds in a pastel palette, generated from real terrain and
-  OpenStreetMap data (roads, buildings by kind, forests, water, railways), with cameras, time of
-  day and weather
+  OpenStreetMap data (roads, buildings by kind — churches, castles and lighthouses among them —,
+  forests, water, railways; palms and houses built for the heat in the subtropics), with cameras,
+  time of day and weather
 - Course library: prepared routes as `.tqc` files that ride offline on any computer
 - Video courses: GoPro videos with GPS and Incyclist route videos; the video plays at your speed
 - Realistic physics, adjustable trainer difficulty, descent modes; ghosts and pacers

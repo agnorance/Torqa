@@ -6,6 +6,8 @@ along y), which the app fits to the map's outlines.
 
 import math
 
+from mathutils import Vector
+
 from kit import (
     UP, Facade, Mesh, Opening, Rect, band, balcony, canopy, chimney, clock, door, finial, flag,
     flat_roof, gable_roof, half_hipped_roof, hipped_roof, log_corners, louvres, needle,
@@ -628,3 +630,265 @@ def public(spec):
         top = max(top + 2.8, bay_top)
     flag(mesh, (bay_width / 2.0 + 2.5, -rect.width / 2.0 - 3.5, 0.0), 8.0)
     return mesh, footprint(rect.length, rect.width, eaves, top + 0.5, storeys=storeys)
+
+
+# Castles and lighthouses stand on hills and rocks: their walls reach this far below the
+# ground, and the world lets them stand on plots falling nearly as much (`DEEP_BASEMENT` in
+# core/torqa-world/src/buildings/mod.rs).
+DEEP = 8.0
+
+
+def ring_points(centre, radius, sides, z, turn=0.0):
+    """Corners of a regular polygon round `centre` at height `z`, counter-clockwise."""
+    cx, cy = centre
+    return [
+        Vector((cx + radius * math.cos(turn + 2 * math.pi * k / sides),
+                cy + radius * math.sin(turn + 2 * math.pi * k / sides), z))
+        for k in range(sides)
+    ]
+
+
+def frustum(mesh, centre, r0, r1, z0, z1, sides, material, turn=0.0):
+    """The faceted sides of an upright prism, tapering from radius `r0` at `z0` to `r1` at
+    `z1` (a cone if `r1` is 0), without caps."""
+    low = ring_points(centre, r0, sides, z0, turn)
+    high = ring_points(centre, r1, sides, z1, turn)
+    middle = Vector((centre[0], centre[1], 0.0))
+    for k in range(sides):
+        a, b = low[k], low[(k + 1) % sides]
+        out = (a + b) / 2.0 - middle
+        out.z = 0.0
+        if r1 > 1e-6:
+            mesh.facing([a, b, high[(k + 1) % sides], high[k]], out, material)
+        else:
+            mesh.facing([a, b, Vector((centre[0], centre[1], z1))], out + UP * 0.2, material)
+
+
+def disc(mesh, centre, radius, sides, z, material, up=True, turn=0.0):
+    """A level regular polygon facing up, or down."""
+    mesh.facing(ring_points(centre, radius, sides, z, turn), UP if up else -UP, material)
+
+
+def merlons(mesh, rect, z, height=0.8, width=0.9, spacing=1.7, thickness=0.5,
+            material="plaster"):
+    """Crenellations: blocks along the top of the walls of `rect`, standing on `z`."""
+    for facade in rect.facades():
+        count = max(2, int(facade.length / spacing))
+        step = facade.length / count
+        for k in range(count):
+            u = (k + 0.5) * step
+            a = facade.point(u - width / 2.0, z, -0.05)
+            b = facade.point(u + width / 2.0, z, thickness)
+            low = (min(a.x, b.x), min(a.y, b.y), z)
+            high = (max(a.x, b.x), max(a.y, b.y), z + height)
+            mesh.box(low, high, material, skip=("-z",))
+
+
+def castle(spec):
+    """A castle: a keep with crenellated walls round a steep hipped roof, round towers with
+    pointed roofs at its corners, small arched windows and an arched gate."""
+    rect = Rect(spec["length"], spec["width"])
+    eaves = spec["eaves"]
+    radius = spec["tower"]
+    tower_top = spec["tower_height"]
+    cover = spec.get("cover", "tiles")
+    mesh = Mesh()
+    south, east, north, west = rect.facades()
+    for facade in (south, east, north, west):
+        openings, gates = [], []
+        if facade is south:
+            middle = facade.length / 2.0
+            gates.append(Opening(middle - 1.6, middle + 1.6, 0.0, 4.6, depth=0.8, arch=True))
+        # Windows clear of the corner towers and the gate.
+        for u in columns(facade.length - 2.0 * radius, 4.8, 2.0):
+            u += radius
+            if gates and abs(u - facade.length / 2.0) < 3.0:
+                continue
+            for z0 in (eaves * 0.45, eaves * 0.72):
+                openings.append(Opening(u - 0.45, u + 0.45, z0, z0 + 1.6, depth=0.5,
+                                        arch=True))
+        wall(mesh, facade, -DEEP, 0.0, "stone")
+        wall(mesh, facade, 0.0, eaves + 1.0, "plaster", openings + gates)
+        for o in openings:
+            window(mesh, facade, o, sill="stone")
+        for g in gates:
+            door(mesh, facade, g, leaf="wood_dark", step="stone")
+    # The wall walk: the parapet's inner faces, its top, and the floor behind it.
+    l, w = rect.length / 2.0, rect.width / 2.0
+    walk = eaves + 1.0
+    inner = Rect(rect.length - 1.0, rect.width - 1.0)
+    for facade in inner.facades():
+        a, b = facade.point(0.0, eaves), facade.point(facade.length, eaves)
+        mesh.facing([a, b, b + UP * 1.0, a + UP * 1.0], -facade.out, "plaster")
+    il, iw = l - 0.5, w - 0.5
+    mesh.facing([(-il, -iw, eaves), (il, -iw, eaves), (il, iw, eaves), (-il, iw, eaves)], UP,
+                "roof_flat")
+    outer = [(-l, -w), (l, -w), (l, w), (-l, w)]
+    edge = [(-il, -iw), (il, -iw), (il, iw), (-il, iw)]
+    for k in range(4):
+        j = (k + 1) % 4
+        mesh.facing([(*outer[k], walk), (*outer[j], walk), (*edge[j], walk), (*edge[k], walk)],
+                    UP, "plaster")
+    merlons(mesh, rect, walk)
+    ridge = hipped_roof(mesh, Rect(rect.length - 1.6, rect.width - 1.6), eaves + 0.2,
+                        spec.get("pitch", 48.0), overhang=0.0, roof=cover, under="plaster",
+                        fascia="plaster")
+    # Corner towers: eight-sided, a corbelled ring under a pointed roof.
+    sides = 8
+    turn = math.pi / sides
+    spire = radius * spec.get("spire", 2.2)
+    apothem = math.cos(math.pi / sides)
+    for sx in (-1.0, 1.0):
+        for sy in (-1.0, 1.0):
+            centre = (sx * l, sy * w)
+            frustum(mesh, centre, radius, radius, -DEEP, 0.0, sides, "stone", turn)
+            frustum(mesh, centre, radius, radius * 0.94, 0.0, tower_top, sides, "plaster", turn)
+            frustum(mesh, centre, radius * 0.94, radius + 0.35, tower_top, tower_top + 0.6,
+                    sides, "stone", turn)
+            frustum(mesh, centre, radius + 0.35, radius + 0.35, tower_top + 0.6,
+                    tower_top + 1.0, sides, "stone", turn)
+            disc(mesh, centre, radius + 0.35, sides, tower_top + 1.0, "stone", turn=turn)
+            frustum(mesh, centre, radius + 0.5, 0.0, tower_top + 1.0, tower_top + 1.0 + spire,
+                    sides, cover, turn)
+            disc(mesh, centre, radius + 0.5, sides, tower_top + 1.0, "plaster", up=False,
+                 turn=turn)
+            tip = Vector((centre[0], centre[1], tower_top + 1.0 + spire))
+            mesh.beam(tip - UP * 0.4, tip + UP * 1.2, 0.08, 0.08, "metal")
+            # Slit windows looking out of the tower's outer face.
+            out = Vector((sx, sy, 0.0)).normalized()
+            left = Vector((-out.y, out.x, 0.0))
+            for z in (tower_top * 0.45, tower_top * 0.75):
+                reach = apothem * radius * (1.0 - 0.06 * z / tower_top) + 0.03
+                face_centre = Vector((centre[0], centre[1], 0.0)) + out * reach
+                mesh.facing([face_centre - left * 0.2 + UP * z, face_centre + left * 0.2 + UP * z,
+                             face_centre + left * 0.2 + UP * (z + 1.3),
+                             face_centre - left * 0.2 + UP * (z + 1.3)], out, "glass")
+    top = max(ridge, tower_top + 1.0 + spire + 1.2)
+    return mesh, footprint(rect.length, rect.width, eaves, top, tower=radius)
+
+
+def lighthouse(spec):
+    """A lighthouse: a round tower tapering up in bands of white and colour from a stone
+    plinth, a door and a few small windows, a gallery with a solid railing round a glazed
+    lantern under a pointed cap."""
+    r0, r1 = spec["diameter"] / 2.0, spec["top"] / 2.0
+    gallery = spec["height"]
+    bands = spec.get("bands", 3)
+    sides = 12
+    turn = math.pi / sides
+    mesh = Mesh()
+    centre = (0.0, 0.0)
+
+    def radius(z):
+        return r0 + (r1 - r0) * max(0.0, z) / gallery
+
+    frustum(mesh, centre, r0 + 0.4, r0 + 0.4, -DEEP, 1.0, sides, "stone", turn)
+    disc(mesh, centre, r0 + 0.4, sides, 1.0, "stone", turn=turn)
+    # Bands from the plinth to the gallery: white, colour, white, … ending white.
+    count = 2 * bands + 1
+    step = (gallery - 1.0) / count
+    for k in range(count):
+        z0, z1 = 1.0 + k * step, 1.0 + (k + 1) * step
+        frustum(mesh, centre, radius(z0), radius(z1), z0, z1, sides,
+                "accent" if k % 2 else "plaster", turn)
+
+    def on_face(k, z0, z1, half, material):
+        """A flat panel (door, window) on face `k` of the tower from `z0` to `z1`."""
+        phi = turn + 2 * math.pi * (k + 0.5) / sides
+        out = Vector((math.cos(phi), math.sin(phi), 0.0))
+        side = Vector((-out.y, out.x, 0.0))
+        apothem = math.cos(math.pi / sides)
+        low = out * (radius(z0) * apothem + 0.04) + UP * z0
+        high = out * (radius(z1) * apothem + 0.04) + UP * z1
+        mesh.facing([low - side * half, low + side * half, high + side * half,
+                     high - side * half], out, material)
+
+    # The door towards −y, small windows up the tower on other sides.
+    front = sides * 3 // 4 - 1
+    on_face(front, 1.0, 3.2, 0.55, "door")
+    for k, share in enumerate((0.3, 0.55, 0.8)):
+        on_face((front + 4 * (k + 1)) % sides, gallery * share, gallery * share + 1.0, 0.3,
+                "glass")
+    # The gallery: a slab reaching out, a solid railing round it.
+    out_r = r1 + 0.9
+    deck = gallery + 0.35
+    frustum(mesh, centre, out_r, out_r, gallery, deck, sides, "stone", turn)
+    disc(mesh, centre, out_r, sides, gallery, "stone", up=False, turn=turn)
+    disc(mesh, centre, out_r, sides, deck, "stone", turn=turn)
+    rail = deck + 1.0
+    frustum(mesh, centre, out_r, out_r, deck, rail, sides, "metal", turn)
+    inner = ring_points(centre, out_r - 0.1, sides, deck, turn)
+    inner_top = ring_points(centre, out_r - 0.1, sides, rail, turn)
+    outer_top = ring_points(centre, out_r, sides, rail, turn)
+    for k in range(sides):
+        j = (k + 1) % sides
+        inward = -(inner[k] + inner[j]) / 2.0
+        inward.z = 0.0
+        mesh.facing([inner[k], inner[j], inner_top[j], inner_top[k]], inward, "metal")
+        mesh.facing([outer_top[k], outer_top[j], inner_top[j], inner_top[k]], UP, "metal")
+    # The lantern: a low metal wall, glass, a cap in the band colour, a ball and a rod.
+    lantern = r1 * 0.72
+    lantern_sides = 10
+    frustum(mesh, centre, lantern, lantern, deck, deck + 0.7, lantern_sides, "metal")
+    frustum(mesh, centre, lantern, lantern, deck + 0.7, deck + 2.5, lantern_sides, "glass")
+    frustum(mesh, centre, lantern + 0.15, lantern + 0.15, deck + 2.5, deck + 2.75,
+            lantern_sides, "metal")
+    disc(mesh, centre, lantern + 0.15, lantern_sides, deck + 2.5, "metal", up=False)
+    cap = lantern * 1.6
+    frustum(mesh, centre, lantern + 0.2, 0.0, deck + 2.75, deck + 2.75 + cap, lantern_sides,
+            "accent")
+    disc(mesh, centre, lantern + 0.2, lantern_sides, deck + 2.75, "metal", up=False)
+    tip = Vector((0.0, 0.0, deck + 2.75 + cap))
+    mesh.sphere(tip + UP * 0.15, 0.22, "metal", rings=3, segments=6)
+    mesh.beam(tip, tip + UP * 1.1, 0.07, 0.07, "metal")
+    return mesh, footprint(2.0 * r0, 2.0 * r0, gallery, tip.z + 1.1)
+
+
+def tropical(spec):
+    """A house of the subtropics, as on Okinawa and Ishigaki: plastered concrete walls with
+    wide windows under deep sun slabs, and a flat roof behind a low parapet with a water tank
+    on it, or a low hipped roof of red tiles with white ridges and wide eaves."""
+    rect = Rect(spec["length"], spec["width"])
+    storeys = spec["storeys"]
+    eaves = eaves_height(storeys)
+    flat = spec["roof"] == "flat"
+    parapet = 0.5
+    mesh = Mesh()
+    south, east, north, west = rect.facades()
+    for facade in (south, east, north, west):
+        long_side = facade in (south, north)
+        centres = columns(facade.length, 3.4 if long_side else 3.2, 1.8)
+        openings, doors = [], []
+        for storey in range(storeys):
+            floor = FLOOR + storey * STOREY
+            for k, u in enumerate(centres):
+                if facade is south and storey == 0 and k == len(centres) // 2:
+                    doors.append(Opening(u - 0.8, u + 0.8, floor, floor + 2.2, depth=0.2))
+                    continue
+                openings.append(Opening(u - 0.8, u + 0.8, floor + 0.7, floor + 2.2,
+                                        depth=0.18))
+        wall(mesh, facade, -BASEMENT, FLOOR, "stone")
+        wall(mesh, facade, FLOOR, eaves + (parapet if flat else 0.0), "plaster",
+             openings + doors)
+        for o in openings:
+            window(mesh, facade, o, sill=None)
+        for o in doors:
+            door(mesh, facade, o, leaf="door", step="stone")
+    # Sun slabs over the windows of every storey the eaves do not shade.
+    for storey in range(storeys if flat else storeys - 1):
+        z = FLOOR + storey * STOREY + 2.45
+        band(mesh, rect, z, z + 0.16, 0.75, "plaster")
+    if flat:
+        top = flat_roof(mesh, rect, eaves, parapet, cap="plaster", cap_out=0.12,
+                        cap_height=0.2)
+        # A water tank on a stand, as on most roofs there.
+        x, y = rect.length * 0.22, -rect.width * 0.18
+        mesh.box((x - 0.6, y - 0.6, eaves), (x + 0.6, y + 0.6, eaves + 0.5), "metal",
+                 skip=("-z",))
+        frustum(mesh, (x, y), 0.55, 0.55, eaves + 0.5, eaves + 1.6, 8, "metal")
+        disc(mesh, (x, y), 0.55, 8, eaves + 1.6, "metal")
+        return mesh, footprint(rect.length, rect.width, eaves, max(top, eaves + 1.6),
+                               storeys=storeys)
+    ridge = hipped_roof(mesh, rect, eaves, spec.get("pitch", 24.0), overhang=1.1,
+                        under="plaster", fascia="plaster", caps="plaster")
+    return mesh, footprint(rect.length, rect.width, eaves, ridge + 0.2, storeys=storeys)

@@ -8,6 +8,7 @@
 mod buildings;
 mod chains;
 mod channels;
+mod climate;
 mod drape;
 mod horizon;
 mod junctions;
@@ -234,7 +235,10 @@ pub async fn generate<M: ElevationModel>(
     // Announce the step before the slower preparation below.
     progress(0, total);
     let land = LandIndex::new(&map.areas, &projection);
-    let buildings = buildings_by_chunk(map, &projection, &road, &land);
+    let climate = climate::Climate::at(route.points()[0].lat);
+    let lone_lighthouses = buildings::lone_lighthouses(map, &projection);
+    let buildings =
+        buildings_by_chunk((map, &lone_lighthouses), &projection, &road, &land, climate);
     let mut ways = Ways::new(map, &projection, &road, model).await;
     let portals = structures::open_portals(
         &mut road,
@@ -295,6 +299,7 @@ pub async fn generate<M: ElevationModel>(
             road: &road,
             streets: &ways.clearance,
             buildings: &footprints,
+            climate,
         };
         let mut trees = vegetation::place(heights.origin, CHUNK_SIZE, &ground, origin);
         vegetation::place_grass(&mut trees, heights.origin, CHUNK_SIZE, &ground, origin);
@@ -339,12 +344,14 @@ pub async fn generate<M: ElevationModel>(
     world
 }
 
-/// Buildings near the route, grouped by the chunk containing their first corner.
+/// Buildings near the route, the map's and `extra` ones (lighthouses standing alone), grouped
+/// by the chunk containing their first corner.
 fn buildings_by_chunk<'a>(
-    map: &'a MapData,
+    (map, extra): (&'a MapData, &'a [torqa_osm::Building]),
     projection: &LocalProjection,
     road: &RoadIndex,
     land: &LandIndex,
+    climate: climate::Climate,
 ) -> HashMap<(i32, i32), Vec<buildings::Plot<'a>>> {
     let project = |points: &[(f64, f64)]| -> Vec<(f64, f64)> {
         points
@@ -366,7 +373,7 @@ fn buildings_by_chunk<'a>(
         .chain(road.samples(3.0));
     let frontage = buildings::Frontage::new(streets);
     let mut plots = Vec::new();
-    for building in &map.buildings {
+    for building in map.buildings.iter().chain(extra) {
         let footprint = buildings::footprint(building, projection);
         let Some(&(east, north)) = footprint.first() else {
             continue;
@@ -404,9 +411,17 @@ fn buildings_by_chunk<'a>(
             church: false,
             shop: None,
             purpose: None,
+            landmark: None,
+            climate,
         });
     }
     buildings::mark_churches(&mut plots, &project(&map.churches));
+    for (points, landmark) in [
+        (&map.castles, buildings::Landmark::Castle),
+        (&map.lighthouses, buildings::Landmark::Lighthouse),
+    ] {
+        buildings::mark_landmarks(&mut plots, &project(points), landmark);
+    }
     for (points, purpose) in [
         (&map.offices, buildings::Purpose::Office),
         (&map.hotels, buildings::Purpose::Hotel),

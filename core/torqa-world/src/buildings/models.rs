@@ -21,10 +21,10 @@ pub(crate) const MAX_STRETCH: f64 = 1.25;
 pub(crate) struct Model {
     #[serde(skip)]
     pub(crate) name: String,
-    /// `house`, `chalet`, `farmhouse`, `church`, `chapel`, `shed`, `office`, `public` or
-    /// `hotel`.
+    /// `house`, `chalet`, `farmhouse`, `church`, `chapel`, `shed`, `office`, `public`,
+    /// `hotel`, `castle`, `lighthouse` or `tropical` (houses of the subtropics).
     kind: String,
-    /// `gable` or `hipped`.
+    /// `gable`, `hipped` or `flat`.
     pub(crate) roof: String,
     /// The footprint its walls stand on: along its x axis and across.
     pub(crate) length: f64,
@@ -57,6 +57,8 @@ pub(crate) static MODELS: LazyLock<Vec<Model>> = LazyLock::new(|| {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Wanted {
     pub(crate) kind: Kind,
+    /// Houses in the subtropics are built for the heat.
+    pub(crate) tropical: bool,
     /// Small churches are chapels.
     pub(crate) chapel: bool,
     pub(crate) storeys: Option<u32>,
@@ -75,6 +77,7 @@ pub(crate) struct Fit {
 /// wanted kind, the least stretched, with storeys and roof as wanted where possible.
 pub(crate) fn fitting(rect: &Rect, wanted: Wanted, dice: &Dice) -> Option<Fit> {
     let kind = match wanted.kind {
+        Kind::House if wanted.tropical => "tropical",
         Kind::House => "house",
         Kind::Chalet => "chalet",
         Kind::Farmhouse => "farmhouse",
@@ -84,6 +87,8 @@ pub(crate) fn fitting(rect: &Rect, wanted: Wanted, dice: &Dice) -> Option<Fit> {
         Kind::Office => "office",
         Kind::Public => "public",
         Kind::Hotel => "hotel",
+        Kind::Castle => "castle",
+        Kind::Lighthouse => "lighthouse",
         Kind::Block | Kind::Hall => return None,
     };
     let (length, width) = (2.0 * rect.half_length, 2.0 * rect.half_width);
@@ -155,6 +160,7 @@ mod tests {
         };
         let wanted = Wanted {
             kind: Kind::House,
+            tropical: false,
             chapel: false,
             storeys: Some(2),
             hipped: false,
@@ -184,6 +190,7 @@ mod tests {
         for (storeys, hipped) in [(1, false), (2, false), (2, true), (3, false)] {
             let wanted = Wanted {
                 kind: Kind::House,
+                tropical: false,
                 chapel: false,
                 storeys: Some(storeys),
                 hipped,
@@ -211,6 +218,7 @@ mod tests {
             };
             let wanted = Wanted {
                 kind,
+                tropical: false,
                 chapel: false,
                 storeys: Some(storeys),
                 hipped,
@@ -224,10 +232,73 @@ mod tests {
     }
 
     #[test]
+    fn castles_and_lighthouses_get_their_models() {
+        // A castle's keep, 24 × 17 m, and a lighthouse 6 m across (round, so a square).
+        let keep = Rect {
+            centre: (0.0, 0.0),
+            axis: (1.0, 0.0),
+            half_length: 12.0,
+            half_width: 8.5,
+        };
+        let tower = Rect::square((0.0, 0.0), (1.0, 0.0), 3.0);
+        for (rect, kind, name) in [
+            (keep, Kind::Castle, "castle"),
+            (tower, Kind::Lighthouse, "lighthouse"),
+        ] {
+            let wanted = Wanted {
+                kind,
+                tropical: false,
+                chapel: false,
+                storeys: None,
+                hipped: false,
+            };
+            let fit = fitting(&rect, wanted, &Dice(9)).expect("a model");
+
+            assert_eq!(fit.model.kind, name);
+        }
+    }
+
+    #[test]
+    fn houses_in_the_subtropics_get_flat_or_low_hipped_roofs() {
+        let rect = Rect {
+            centre: (0.0, 0.0),
+            axis: (1.0, 0.0),
+            half_length: 6.0,
+            half_width: 4.75,
+        };
+        for (storeys, hipped) in [(1, false), (2, false), (1, true)] {
+            let wanted = Wanted {
+                kind: Kind::House,
+                tropical: true,
+                chapel: false,
+                storeys: Some(storeys),
+                hipped,
+            };
+            let fit = fitting(&rect, wanted, &Dice(13)).expect("a tropical model");
+
+            assert_eq!(fit.model.kind, "tropical");
+            assert_eq!(fit.model.storeys, Some(storeys));
+            let roof = if hipped { "hipped" } else { "flat" };
+            assert_eq!(fit.model.roof, roof);
+        }
+        // Elsewhere the same house gets a house of the temperate world.
+        let temperate = Wanted {
+            kind: Kind::House,
+            tropical: false,
+            chapel: false,
+            storeys: Some(2),
+            hipped: false,
+        };
+        let fit = fitting(&rect, temperate, &Dice(13)).expect("a house model");
+        assert_eq!(fit.model.kind, "house");
+    }
+
+    #[test]
     fn nothing_fits_a_building_far_off_every_model() {
         let huge = Rect::square((0.0, 0.0), (1.0, 0.0), 40.0);
         let wanted = Wanted {
             kind: Kind::Chalet,
+            tropical: false,
             chapel: false,
             storeys: None,
             hipped: false,

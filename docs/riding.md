@@ -55,6 +55,10 @@ rounded corners, and buildings stand where they are mapped. The map rarely says 
 is, so Torqa infers it from where it stands and its size. That gives:
 
 - churches with a tower, and chapels with a turret on the roof;
+- castles with crenellated walls and round corner towers, where the map has a castle (ruins
+  stay as mapped);
+- lighthouses in bands of white and red with a lantern on top, where the map names one, also
+  where it has no outline for the tower;
 - chalets with timber walls and deep eaves in the mountains;
 - farmhouses under big roofs in the countryside;
 - apartment blocks, and metal-clad halls on industrial land;
@@ -66,6 +70,12 @@ is, so Torqa infers it from where it stands and its size. That gives:
 - houses and sheds everywhere else;
 - shops, cafés and restaurants with a glazed front and an awning onto their street, where the map
   has one.
+
+In the subtropics (within 27° of the equator, below 1,200 m: Okinawa, Ishigaki, Hawaii,
+southern Florida and the like) the world changes with the climate: palms, banana plants and
+broadleaf shrubs grow instead of conifers and the usual bushes, and houses are built for the
+heat — light plastered concrete under flat roofs with a water tank, or under low hipped roofs
+of red tiles with white ridges and wide eaves. There are no chalets or Bernese farmhouses there.
 
 Mapped heights and façade colours are used where the map has them. Close to you, buildings whose
 outline suits one are models made in Blender, chunky and faceted in flat pastel colours:

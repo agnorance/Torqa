@@ -1,5 +1,35 @@
 {
  "models": {
+  "castle_l": {
+   "kind": "castle",
+   "roof": "hipped",
+   "length": 34.0,
+   "width": 24.0,
+   "eaves": 13.0,
+   "height": 31.56,
+   "tower": 3.8,
+   "pitch": 45
+  },
+  "castle_m": {
+   "kind": "castle",
+   "roof": "hipped",
+   "length": 22.0,
+   "width": 16.0,
+   "eaves": 11.0,
+   "height": 25.8,
+   "tower": 3.0,
+   "pitch": 48
+  },
+  "castle_s": {
+   "kind": "castle",
+   "roof": "hipped",
+   "length": 14.0,
+   "width": 11.0,
+   "eaves": 10.0,
+   "height": 22.48,
+   "tower": 2.4,
+   "pitch": 50
+  },
   "chalet_2_m": {
    "kind": "chalet",
    "roof": "gable",
@@ -252,6 +282,22 @@
    "storeys": 3,
    "pitch": 30
   },
+  "lighthouse_l": {
+   "kind": "lighthouse",
+   "roof": "flat",
+   "length": 7.8,
+   "width": 7.8,
+   "eaves": 27.0,
+   "height": 34.08
+  },
+  "lighthouse_s": {
+   "kind": "lighthouse",
+   "roof": "flat",
+   "length": 5.0,
+   "width": 5.0,
+   "eaves": 16.0,
+   "height": 22.274
+  },
   "office_2_xl": {
    "kind": "office",
    "roof": "flat",
@@ -350,6 +396,53 @@
    "width": 2.6,
    "eaves": 2.3,
    "height": 3.075
+  },
+  "tropical_flat_1_m": {
+   "kind": "tropical",
+   "roof": "flat",
+   "length": 11.0,
+   "width": 9.0,
+   "eaves": 3.45,
+   "height": 5.05,
+   "storeys": 1
+  },
+  "tropical_flat_2_l": {
+   "kind": "tropical",
+   "roof": "flat",
+   "length": 15.0,
+   "width": 11.5,
+   "eaves": 6.35,
+   "height": 7.95,
+   "storeys": 2
+  },
+  "tropical_flat_2_m": {
+   "kind": "tropical",
+   "roof": "flat",
+   "length": 12.0,
+   "width": 9.5,
+   "eaves": 6.35,
+   "height": 7.95,
+   "storeys": 2
+  },
+  "tropical_hipped_1_m": {
+   "kind": "tropical",
+   "roof": "hipped",
+   "length": 12.5,
+   "width": 10.0,
+   "eaves": 3.45,
+   "height": 6.126,
+   "storeys": 1,
+   "pitch": 24
+  },
+  "tropical_hipped_1_s": {
+   "kind": "tropical",
+   "roof": "hipped",
+   "length": 9.5,
+   "width": 8.0,
+   "eaves": 3.45,
+   "height": 5.681,
+   "storeys": 1,
+   "pitch": 24
   }
  }
 }

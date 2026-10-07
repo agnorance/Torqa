@@ -1,10 +1,11 @@
 //! Buildings from OpenStreetMap footprints (R45). The map rarely says more than the outline
 //! and sometimes a height, so what a building is gets guessed from where it stands, what is in
-//! it and its size: churches from places of worship, hotels, offices and public buildings
-//! (schools, hospitals, town halls) from the points of interest in them or the land they stand
-//! on, halls on industrial land, chalets in the mountains, farmhouses as large buildings in the
-//! countryside, blocks from their height or size in towns, sheds from their size, and houses
-//! otherwise. Each kind gets its own proportions, roof, materials and details.
+//! it and its size: churches from places of worship, castles and lighthouses from theirs (#137),
+//! hotels, offices and public buildings (schools, hospitals, town halls) from the points of
+//! interest in them or the land they stand on, halls on industrial land, chalets in the
+//! mountains, farmhouses as large buildings in the countryside, blocks from their height or
+//! size in towns, sheds from their size, and houses otherwise — in the subtropics houses built
+//! for the heat (#136). Each kind gets its own proportions, roof, materials and details.
 
 mod models;
 mod parts;
@@ -13,8 +14,10 @@ mod shape;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::LazyLock;
 
-use torqa_osm::Building;
+use torqa_osm::{Building, MapData};
+use torqa_routes::LocalProjection;
 
+use crate::climate::Climate;
 use crate::{BuildingCell, HeightGrid, MeshData, hash, palette};
 use models::{Fit, Wanted};
 pub(crate) use parts::Style;
@@ -31,7 +34,8 @@ const FOUNDATION: f64 = 1.0;
 /// Footprints filling this much of the rectangle around them are built as that rectangle,
 /// which can carry gable and hipped roofs; the difference does not show from the road.
 const RECTANGULAR: f64 = 0.8;
-/// Churches keep their nave shape even with a choir or porch.
+/// Churches keep their nave shape even with a choir or porch, castles theirs with towers
+/// standing out, and lighthouses theirs though round (a circle fills 79 % of its square).
 const RECTANGULAR_CHURCH: f64 = 0.7;
 /// Above this elevation chalets start to replace houses; above the second, all are chalets.
 const CHALETS_FROM: f64 = 700.0;
@@ -39,6 +43,13 @@ const CHALETS_ONLY: f64 = 1100.0;
 /// A church point mapped on church grounds rather than the church marks the largest
 /// building this close.
 const CHURCH_REACH: f64 = 30.0;
+/// A castle point mapped on the castle's grounds rather than its keep marks the largest
+/// building this close.
+const CASTLE_REACH: f64 = 40.0;
+/// A lighthouse point beside its tower marks the nearest building this close; with none, the
+/// tower stands on its own, `LONE_LIGHTHOUSE` metres wide.
+const LIGHTHOUSE_REACH: f64 = 10.0;
+const LONE_LIGHTHOUSE: f64 = 6.0;
 /// Churches smaller than this are chapels.
 const CHAPEL_AREA: f64 = 150.0;
 /// Public buildings, hotels and offices are at least this large; smaller ones are what their
@@ -49,8 +60,10 @@ const OFFICE_AREA: f64 = 150.0;
 /// Larger low buildings on commercial land are stores, built as halls.
 const STORE_AREA: f64 = 2500.0;
 /// Models' walls reach 3 m below their ground floor; on plots falling more than this they
-/// would float, so those buildings keep their shells.
+/// would float, so those buildings keep their shells. Castles and lighthouses, on hilltops and
+/// rocks, reach 8 m down (`art/buildings`, `DEEP`).
 const MODEL_BASEMENT: f64 = 2.8;
+const DEEP_BASEMENT: f64 = 7.8;
 /// Modelled buildings are grouped in cells this size, so that each cell switches between
 /// models up close and shells far away by its own distance.
 const CELL: f64 = 120.0;
@@ -79,6 +92,12 @@ static CLADDING: Colours = LazyLock::new(|| palette::list("buildings.cladding"))
 static SHEET: Colours = LazyLock::new(|| palette::list("buildings.sheet"));
 /// Flat roofs: gravel tones.
 static FLAT: Colours = LazyLock::new(|| palette::list("buildings.flat_roofs"));
+/// Castle walls: light stone and plaster.
+static CASTLE_WALLS: Colours = LazyLock::new(|| palette::list("buildings.castle_walls"));
+/// The bands and caps of lighthouses: coral red first, then teal and plum.
+static BEACON: Colours = LazyLock::new(|| palette::list("buildings.beacon"));
+/// Houses in the subtropics: whites and pale pastels.
+static TROPICAL_WALLS: Colours = LazyLock::new(|| palette::list("buildings.tropical_walls"));
 /// Spires: slate, copper green, coral tiles.
 static SPIRES: Colours = LazyLock::new(|| palette::list("buildings.spires"));
 /// Shop fronts' frames, and awnings.
@@ -132,6 +151,17 @@ pub(crate) enum Kind {
     Public,
     /// A hotel: balconies all along its fronts, an entrance under a canopy.
     Hotel,
+    /// A castle: crenellated walls round a steep roof, round towers at the corners.
+    Castle,
+    /// A lighthouse: a round tower in bands of colour, a lantern on top.
+    Lighthouse,
+}
+
+/// A building the map marks by a point of interest of its own, other than a church.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Landmark {
+    Castle,
+    Lighthouse,
 }
 
 /// Where a building stands.
@@ -161,6 +191,10 @@ pub(crate) struct Plot<'a> {
     pub(crate) shop: Option<Point>,
     /// What the points of interest in or by it say it is used for.
     pub(crate) purpose: Option<Purpose>,
+    /// A castle or lighthouse point lies in or by it.
+    pub(crate) landmark: Option<Landmark>,
+    /// The climate of the region it stands in.
+    pub(crate) climate: Climate,
 }
 
 /// What a building is used for, from the points of interest in or by it; later ones win over
@@ -268,7 +302,7 @@ pub(crate) fn mark_shops(plots: &mut [Plot], shops: &[Point], frontage: &Frontag
             continue;
         };
         let plot = &mut plots[index];
-        if plot.church {
+        if plot.church || plot.landmark.is_some() {
             continue;
         }
         plot.shop = frontage.nearest(centroid(&plot.footprint), STREET_REACH);
@@ -335,6 +369,90 @@ pub(crate) fn mark_churches(plots: &mut [Plot], churches: &[Point]) {
     }
 }
 
+/// Marks the plots that are castles or lighthouses: the one each point lies in, or near it
+/// for castles (points on the castle grounds) the largest building, for lighthouses (points
+/// beside the tower) the nearest. Churches stay churches.
+pub(crate) fn mark_landmarks(plots: &mut [Plot], points: &[Point], landmark: Landmark) {
+    for &point in points {
+        let inside = plots.iter().position(|p| contains(&p.footprint, point));
+        let nearby = || {
+            let near = plots.iter().enumerate().map(|(k, p)| {
+                (
+                    k,
+                    outline_distance(&p.footprint, point),
+                    signed_area(&p.footprint),
+                )
+            });
+            let found = match landmark {
+                Landmark::Castle => near
+                    .filter(|&(_, d, _)| d < CASTLE_REACH)
+                    .max_by(|a, b| a.2.total_cmp(&b.2)),
+                Landmark::Lighthouse => near
+                    .filter(|&(_, d, _)| d < LIGHTHOUSE_REACH)
+                    .min_by(|a, b| a.1.total_cmp(&b.1)),
+            };
+            found.map(|(k, _, _)| k)
+        };
+        if let Some(i) = inside.or_else(nearby)
+            && !plots[i].church
+        {
+            plots[i].landmark = Some(landmark);
+        }
+    }
+}
+
+/// Buildings for the lighthouses the map has as points only, with no building in or near
+/// them: a round tower `LONE_LIGHTHOUSE` metres wide on each point.
+pub(crate) fn lone_lighthouses(map: &MapData, projection: &LocalProjection) -> Vec<Building> {
+    // Buildings starting farther off than this (about 500 m) cannot hold the point.
+    const NEAR: f64 = 0.005;
+    map.lighthouses
+        .iter()
+        .filter_map(|&(lat, lon)| {
+            let point = projection.project(lat, lon);
+            let wide = NEAR / lat.to_radians().cos().max(0.1);
+            let housed = map
+                .buildings
+                .iter()
+                .filter(|b| {
+                    b.outline
+                        .first()
+                        .is_some_and(|&(a, o)| (a - lat).abs() < NEAR && (o - lon).abs() < wide)
+                })
+                .any(|b| {
+                    let outline = footprint(b, projection);
+                    outline.len() >= 3
+                        && (contains(&outline, point)
+                            || outline_distance(&outline, point) < LIGHTHOUSE_REACH)
+                });
+            (!housed).then(|| {
+                let radius = LONE_LIGHTHOUSE / 2.0;
+                let outline = (0..=8)
+                    .map(|k| {
+                        let angle = std::f64::consts::TAU * f64::from(k % 8) / 8.0;
+                        projection.unproject(
+                            point.0 + radius * angle.cos(),
+                            point.1 + radius * angle.sin(),
+                        )
+                    })
+                    .collect();
+                // Negative, so apart from the map's buildings' ids, and stable for the place.
+                #[allow(clippy::cast_possible_truncation)] // micro-degrees fit easily
+                let id = i64::MIN
+                    + ((lat + 90.0) * 1e6).round() as i64 * 400_000_000
+                    + ((lon + 180.0) * 1e6).round() as i64;
+                Building {
+                    id,
+                    outline,
+                    height: None,
+                    levels: None,
+                    color: None,
+                }
+            })
+        })
+        .collect()
+}
+
 /// A chunk's buildings.
 #[derive(Debug, Default)]
 pub(crate) struct ChunkBuildings {
@@ -359,19 +477,27 @@ pub(crate) fn add(chunk: &mut ChunkBuildings, plot: &Plot, heights: &HeightGrid,
     let area = signed_area(footprint);
     let dice = Dice(plot.building.id);
     let kind = kind(plot, area, ground, &dice);
-    let fill = if kind == Kind::Church {
+    let tropical = plot.climate.tropical_at(ground);
+    let special = matches!(kind, Kind::Church | Kind::Castle | Kind::Lighthouse);
+    let fill = if special {
         RECTANGULAR_CHURCH
     } else {
         RECTANGULAR
     };
     let rect = Rect::around(footprint).filter(|r| area / r.area() >= fill);
-    let design = (kind != Kind::Church).then(|| design(kind, plot.building, rect.is_some(), &dice));
+    let design = (!special).then(|| design(kind, plot.building, rect.is_some(), tropical, &dice));
+    let basement = if matches!(kind, Kind::Castle | Kind::Lighthouse) {
+        DEEP_BASEMENT
+    } else {
+        MODEL_BASEMENT
+    };
     // A shop's front is drawn on the shell, which shows it up close too.
     let fit = rect
-        .filter(|_| ground - lowest < MODEL_BASEMENT && plot.shop.is_none())
+        .filter(|_| ground - lowest < basement && plot.shop.is_none())
         .and_then(|rect| {
             let wanted = Wanted {
                 kind,
+                tropical,
                 chapel: area < CHAPEL_AREA,
                 storeys: design
                     .as_ref()
@@ -399,7 +525,7 @@ pub(crate) fn add(chunk: &mut ChunkBuildings, plot: &Plot, heights: &HeightGrid,
         (rect.centre.1 / CELL).floor() as i64,
     );
     let cell = chunk.cells.entry(cell).or_default();
-    let (plaster, roof) = colours(plot.building, design.as_ref(), &dice);
+    let (plaster, roof) = colours(plot, design.as_ref(), &dice);
     // Chalets and farmhouses show their front gable to the valley; churches have their choir
     // in the east; the rest face either way.
     let front = rect.point(rect.half_length, 0.0);
@@ -450,7 +576,11 @@ fn shell(
     fit: Option<Fit>,
 ) {
     let Some(design) = design else {
-        church(b, plot, area, rect, dice);
+        match landmark(plot) {
+            Some(Landmark::Castle) => castle(b, plot, area, rect, dice, fit),
+            Some(Landmark::Lighthouse) => lighthouse(b, plot, rect, dice, fit),
+            None => church(b, plot, area, rect, dice),
+        }
         return;
     };
     if let Some(fit) = fit {
@@ -569,9 +699,15 @@ impl Instance<'_> {
     }
 }
 
+/// The castle or lighthouse a plot is, unless it is a church.
+fn landmark(plot: &Plot) -> Option<Landmark> {
+    plot.landmark.filter(|_| !plot.church)
+}
+
 /// The plaster and roof colours of a building (sRGB), for its model. Flat-roofed offices,
-/// hotels and public buildings have their accent colour in place of the roof's.
-fn colours(building: &Building, design: Option<&Design>, dice: &Dice) -> ([f32; 3], [f32; 3]) {
+/// hotels and public buildings have their accent colour in place of the roof's, lighthouses
+/// the colour of their bands.
+fn colours(plot: &Plot, design: Option<&Design>, dice: &Dice) -> ([f32; 3], [f32; 3]) {
     if let Some(design) = design
         && matches!(design.kind, Kind::Office | Kind::Public | Kind::Hotel)
     {
@@ -586,7 +722,11 @@ fn colours(building: &Building, design: Option<&Design>, dice: &Dice) -> ([f32; 
             design.roof_paint.top.rgb,
         )
     } else {
-        let (wall, roof) = church_paints(building, dice);
+        let (wall, roof) = match landmark(plot) {
+            Some(Landmark::Castle) => castle_paints(plot.building, dice),
+            Some(Landmark::Lighthouse) => lighthouse_paints(dice),
+            None => church_paints(plot.building, dice),
+        };
         (wall.rgb, roof.rgb)
     }
 }
@@ -604,6 +744,11 @@ fn storeys_of(walls: f64) -> u32 {
 fn kind(plot: &Plot, area: f64, ground: f64, dice: &Dice) -> Kind {
     if plot.church {
         return Kind::Church;
+    }
+    match plot.landmark {
+        Some(Landmark::Castle) => return Kind::Castle,
+        Some(Landmark::Lighthouse) => return Kind::Lighthouse,
+        None => {}
     }
     let height = mapped_height(plot.building);
     if area < 30.0 && height.is_none_or(|h| h < 5.0) {
@@ -624,7 +769,9 @@ fn kind(plot: &Plot, area: f64, ground: f64, dice: &Dice) -> Kind {
             Kind::Block
         };
     }
-    let alpine = dice.roll(0) < smoothstep(CHALETS_FROM, CHALETS_ONLY, ground);
+    // The subtropics have neither chalets nor Bernese farmhouses.
+    let tropical = plot.climate.tropical_at(ground);
+    let alpine = !tropical && dice.roll(0) < smoothstep(CHALETS_FROM, CHALETS_ONLY, ground);
     match plot.setting {
         Setting::Industrial | Setting::Commercial if area < 80.0 => Kind::Shed,
         Setting::Industrial => Kind::Hall,
@@ -635,7 +782,7 @@ fn kind(plot: &Plot, area: f64, ground: f64, dice: &Dice) -> Kind {
         Setting::Town if area > 400.0 => Kind::Block,
         Setting::Countryside if area > 1500.0 => Kind::Hall,
         _ if alpine => Kind::Chalet,
-        Setting::Countryside if area > 220.0 => Kind::Farmhouse,
+        Setting::Countryside if area > 220.0 && !tropical => Kind::Farmhouse,
         _ => Kind::House,
     }
 }
@@ -735,7 +882,15 @@ struct Trim {
     every_column: bool,
 }
 
-fn design(kind: Kind, building: &Building, rectangular: bool, dice: &Dice) -> Design {
+/// How a building of `kind` is built; houses in the subtropics (`tropical`) are built for the
+/// heat.
+fn design(
+    kind: Kind,
+    building: &Building,
+    rectangular: bool,
+    tropical: bool,
+    dice: &Dice,
+) -> Design {
     let recipe = Recipe {
         kind,
         building,
@@ -743,6 +898,7 @@ fn design(kind: Kind, building: &Building, rectangular: bool, dice: &Dice) -> De
         dice,
     };
     match kind {
+        Kind::House if tropical => recipe.tropical_house(),
         Kind::House => recipe.house(),
         Kind::Chalet => recipe.chalet(),
         Kind::Farmhouse => recipe.farmhouse(),
@@ -751,8 +907,8 @@ fn design(kind: Kind, building: &Building, rectangular: bool, dice: &Dice) -> De
         Kind::Office => recipe.office(),
         Kind::Public => recipe.public(),
         Kind::Hotel => recipe.hotel(),
-        // `church` builds churches; none get here.
-        Kind::Hall | Kind::Church => recipe.hall(),
+        // `church`, `castle` and `lighthouse` build those; none get here.
+        Kind::Hall | Kind::Church | Kind::Castle | Kind::Lighthouse => recipe.hall(),
     }
 }
 
@@ -820,6 +976,50 @@ impl Recipe<'_> {
             },
             chimney: self.dice.roll(10) < 0.6,
             gable_windows: Some(*WHITE),
+            balcony: false,
+            trim: None,
+        }
+    }
+
+    /// A house of the subtropics (#136), as on Okinawa and Ishigaki: light plastered concrete
+    /// under a flat roof behind a low parapet, or under a low hipped roof of red tiles with
+    /// wide eaves against sun and rain; no chimney.
+    fn tropical_house(&self) -> Design {
+        let wall = self.facade(&TROPICAL_WALLS, Style::Plaster);
+        let flat = !self.rectangular || self.dice.roll(4) < 0.55;
+        // Concrete houses often have two storeys, tiled ones mostly one.
+        let one_storey = if flat { 0.4 } else { 0.8 };
+        let count = if self.dice.roll(3) < one_storey {
+            1.0
+        } else {
+            2.0
+        };
+        Design {
+            kind: self.kind,
+            walls: storeys(count),
+            windows: true,
+            roof: if flat {
+                Roof::Flat { parapet: 0.5 }
+            } else {
+                Roof::Hipped
+            },
+            pitch_degrees: 22.0 + 5.0 * self.dice.roll(6),
+            max_rise: 3.5,
+            overhang: self.overhang(0.9, 0.4),
+            verge: self.overhang(0.9, 0.4),
+            wall,
+            base: None,
+            roof_paint: RoofPaint {
+                top: if flat {
+                    self.paint(&FLAT, 8, Style::Flat)
+                } else {
+                    self.paint(&TILES[..2], 8, Style::Tiles)
+                },
+                under: wall.with(Style::Blank),
+                gables: wall.with(Style::Blank),
+            },
+            chimney: false,
+            gable_windows: None,
             balcony: false,
             trim: None,
         }
@@ -1369,6 +1569,180 @@ fn church_paints(building: &Building, dice: &Dice) -> (Paint, Paint) {
     (wall, roof)
 }
 
+/// A castle's walls (the mapped colour if there is one) and roofs.
+fn castle_paints(building: &Building, dice: &Dice) -> (Paint, Paint) {
+    let wall = Paint::new(
+        dice.tint(building.color.map_or_else(
+            || dice.pick(1, &CASTLE_WALLS),
+            |mapped| nearest(mapped, &CASTLE_WALLS),
+        )),
+        Style::Blank,
+    );
+    let roof = Paint::new(dice.pick(2, &[TILES[0], TILES[1], TILES[3]]), Style::Tiles);
+    (wall, roof)
+}
+
+/// A lighthouse's white, and the colour of its bands and cap: mostly red, now and then
+/// another.
+fn lighthouse_paints(dice: &Dice) -> (Paint, Paint) {
+    let band = if dice.roll(2) < 0.75 {
+        BEACON[0]
+    } else {
+        dice.pick(3, &BEACON[1..])
+    };
+    (
+        Paint::new(*WHITE, Style::Blank),
+        Paint::new(band, Style::Blank),
+    )
+}
+
+/// A castle (#137): walls rising to a parapet round a steep hipped roof and, on a
+/// rectangular keep, round towers under pointed roofs at its corners, as the models have.
+fn castle(
+    b: &mut Builder,
+    plot: &Plot,
+    area: f64,
+    rect: Option<Rect>,
+    dice: &Dice,
+    fit: Option<Fit>,
+) {
+    let (wall, roof) = castle_paints(plot.building, dice);
+    let outline = rect.map_or_else(|| plot.footprint.clone(), |r| r.corners());
+    let walls = fit.map_or_else(
+        || {
+            plot.building
+                .height
+                .map_or(0.5 * area.sqrt(), |height| height * 0.6)
+                .clamp(9.0, 16.0)
+        },
+        |fit| fit.model.eaves,
+    );
+    let eaves = b.ground + walls;
+    let parapet = 1.0;
+    b.walls(&outline, b.footing, eaves + parapet, wall);
+    b.flat_roof(
+        &outline,
+        eaves,
+        parapet,
+        Paint::new(FLAT[0], Style::Flat),
+        wall,
+    );
+    let Some(rect) = rect else {
+        return;
+    };
+    let paint = RoofPaint {
+        top: roof,
+        under: wall,
+        gables: wall,
+    };
+    let keep = Rect {
+        half_length: rect.half_length - 0.8,
+        half_width: rect.half_width - 0.8,
+        ..rect
+    };
+    if keep.half_width > 1.0 {
+        let pitch = Pitch {
+            eaves: eaves + 0.2,
+            angle: 48f64.to_radians().min((10.0 / keep.half_width).atan()),
+            overhang: 0.0,
+            verge: 0.0,
+        };
+        b.hipped_roof(&keep, pitch, paint);
+    }
+    let radius = (rect.half_width * 0.3).clamp(2.0, 4.0);
+    let tower_top = eaves + 6.0;
+    for (along, across) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+        let centre = rect.point(along * rect.half_length, across * rect.half_width);
+        b.walls(
+            &octagon(centre, radius, rect.axis),
+            b.footing,
+            tower_top,
+            wall,
+        );
+        let cap = Rect::square(centre, rect.axis, radius + 0.3);
+        let spire = Pitch {
+            eaves: tower_top,
+            angle: 2.2f64.atan(),
+            overhang: 0.0,
+            verge: 0.0,
+        };
+        b.hipped_roof(&cap, spire, paint);
+    }
+}
+
+/// An eight-sided outline round `centre`, counter-clockwise, turned with `axis`.
+fn octagon(centre: Point, radius: f64, axis: Point) -> Vec<Point> {
+    (0..8)
+        .map(|k| {
+            let angle = std::f64::consts::TAU * (f64::from(k) + 0.5) / 8.0;
+            let (sin, cos) = angle.sin_cos();
+            (
+                centre.0 + radius * (axis.0 * cos - axis.1 * sin),
+                centre.1 + radius * (axis.1 * cos + axis.0 * sin),
+            )
+        })
+        .collect()
+}
+
+/// A lighthouse (#137): its outline (round as mapped) rising in bands of white and colour from
+/// a stone plinth to a gallery, a glazed lantern under a pointed cap on top; as high as
+/// mapped, as its model, or by its width.
+fn lighthouse(b: &mut Builder, plot: &Plot, rect: Option<Rect>, dice: &Dice, fit: Option<Fit>) {
+    let outline = &plot.footprint;
+    let Some(around) = rect.or_else(|| Rect::around(outline)) else {
+        return;
+    };
+    let (white, band) = lighthouse_paints(dice);
+    let stone = Paint::new(*STONE, Style::Blank);
+    let gallery = b.ground
+        + fit.map_or_else(
+            || {
+                plot.building
+                    .height
+                    .map_or(around.half_width * 6.8, |height| height - 4.0)
+                    .clamp(10.0, 40.0)
+            },
+            |fit| fit.model.eaves,
+        );
+    let plinth = b.ground + 1.0;
+    b.walls(outline, b.footing, plinth, stone);
+    let bands = 7;
+    let step = (gallery - plinth) / f64::from(bands);
+    for k in 0..bands {
+        let paint = if k % 2 == 1 { band } else { white };
+        let low = plinth + f64::from(k) * step;
+        b.walls(outline, low, low + step, paint);
+    }
+    let deck = gallery + 0.35;
+    b.band(outline, (gallery, deck), 0.9, stone);
+    b.flat_roof(outline, deck, 0.0, stone, stone);
+    let lantern = Rect::square(
+        around.centre,
+        around.axis,
+        (around.half_width * 0.5).max(1.0),
+    );
+    let glazed = deck + 2.4;
+    b.cuboid(
+        &lantern,
+        (deck, glazed),
+        Paint::new(*METAL, Style::Window),
+        Paint::new(*METAL, Style::Blank),
+        false,
+    );
+    let cap = Pitch {
+        eaves: glazed,
+        angle: 1.2f64.atan(),
+        overhang: 0.2,
+        verge: 0.0,
+    };
+    let paint = RoofPaint {
+        top: band.with(Style::Sheet),
+        under: Paint::new(*METAL, Style::Blank),
+        gables: band,
+    };
+    b.hipped_roof(&lantern, cap, paint);
+}
+
 /// Height of the walls above the ground, from the map if it knows (counting half of a
 /// roof rising `rise` into a mapped height), else the design's.
 fn wall_height(building: &Building, rise: f64, design: &Design) -> f64 {
@@ -1658,6 +2032,8 @@ mod tests {
             church,
             shop: None,
             purpose: None,
+            landmark: None,
+            climate: Climate::Temperate,
         }
     }
 
@@ -1845,5 +2221,103 @@ mod tests {
         // On the house itself.
         mark_churches(&mut plots, &[(201.0, 1.0)]);
         assert!(plots[2].church);
+    }
+
+    #[test]
+    fn castle_and_lighthouse_points_mark_their_buildings() {
+        let square = |e: f64, n: f64, half: f64| {
+            vec![
+                (e - half, n - half),
+                (e + half, n - half),
+                (e + half, n + half),
+                (e - half, n + half),
+            ]
+        };
+        let buildings: Vec<Building> = (1..=5).map(untagged).collect();
+        let mut plots: Vec<Plot> = [
+            // A castle's stable and its keep.
+            (0.0, 0.0, 4.0, false),
+            (30.0, 0.0, 12.0, false),
+            // A lighthouse and the keeper's larger house beside it.
+            (200.0, 0.0, 3.0, false),
+            (212.0, 0.0, 6.0, false),
+            // A church.
+            (400.0, 0.0, 8.0, true),
+        ]
+        .iter()
+        .zip(&buildings)
+        .map(|(&(e, n, half, church), building)| Plot {
+            footprint: square(e, n, half),
+            ..plot(building, Setting::Countryside, church)
+        })
+        .collect();
+
+        // On the castle grounds between the two; beside the tower; on the church.
+        mark_landmarks(&mut plots, &[(9.0, 5.0)], Landmark::Castle);
+        mark_landmarks(&mut plots, &[(200.0, 4.5)], Landmark::Lighthouse);
+        mark_landmarks(&mut plots, &[(400.0, 0.0)], Landmark::Castle);
+
+        let marks: Vec<Option<Landmark>> = plots.iter().map(|p| p.landmark).collect();
+        assert_eq!(
+            marks,
+            [
+                None,
+                Some(Landmark::Castle),
+                Some(Landmark::Lighthouse),
+                None,
+                None
+            ]
+        );
+        assert_eq!(kind(&plots[1], 576.0, 450.0, &Dice(2)), Kind::Castle);
+        // A lighthouse is no shed, however small.
+        assert_eq!(kind(&plots[2], 36.0, 5.0, &Dice(3)), Kind::Lighthouse);
+        assert_eq!(kind(&plots[4], 256.0, 450.0, &Dice(5)), Kind::Church);
+    }
+
+    #[test]
+    fn the_subtropics_have_houses_built_for_the_heat() {
+        let tropical = |id: i64, area: f64, ground: f64| {
+            let building = untagged(id);
+            let plot = Plot {
+                climate: Climate::Tropical,
+                ..plot(&building, Setting::Countryside, false)
+            };
+            kind(&plot, area, ground, &Dice(id))
+        };
+        // Neither chalets on the hills nor Bernese farmhouses: houses.
+        for id in 0..200 {
+            assert_eq!(tropical(id, 120.0, 900.0), Kind::House);
+            assert_eq!(tropical(id, 600.0, 20.0), Kind::House);
+        }
+        // Up in the highlands the tropics are temperate.
+        assert!((0..200).all(|id| tropical(id, 120.0, 1500.0) == Kind::Chalet));
+
+        let designs: Vec<Design> = (0..100)
+            .map(|id| design(Kind::House, &untagged(id), true, true, &Dice(id)))
+            .collect();
+        let flat = designs
+            .iter()
+            .filter(|d| matches!(d.roof, Roof::Flat { .. }))
+            .count();
+        assert!((20..80).contains(&flat), "{flat} flat roofs");
+        for d in &designs {
+            assert!(!d.chimney);
+            assert!(luminance(d.wall.rgb) > 0.7, "light walls: {:?}", d.wall.rgb);
+            if d.roof == Roof::Hipped {
+                assert!(d.pitch_degrees < 28.0 && d.overhang >= 0.9);
+            } else {
+                assert!(matches!(d.roof, Roof::Flat { .. }), "{:?}", d.roof);
+            }
+        }
+        // Outside the tropics the same houses keep pitched roofs and chimneys.
+        let temperate: Vec<Design> = (0..100)
+            .map(|id| design(Kind::House, &untagged(id), true, false, &Dice(id)))
+            .collect();
+        assert!(
+            temperate
+                .iter()
+                .all(|d| d.roof != Roof::Flat { parapet: 0.5 })
+        );
+        assert!(temperate.iter().any(|d| d.chimney));
     }
 }

@@ -189,6 +189,10 @@ pub struct MapData {
     /// Schools, hospitals, town halls, libraries, post offices, police and fire stations, as
     /// points in or by their building.
     pub public: Vec<LatLon>,
+    /// Castles (not ruins), as points on or near their keep.
+    pub castles: Vec<LatLon>,
+    /// Lighthouses, as points on their tower or where it stands when it has no outline.
+    pub lighthouses: Vec<LatLon>,
 }
 
 /// Downloads and caches map tiles.

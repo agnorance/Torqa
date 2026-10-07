@@ -153,7 +153,127 @@ def rock(spec):
     return mesh, height
 
 
-KINDS = {"conifer": conifer, "broadleaf": broadleaf, "bush": bush, "rock": rock}
+def both_sides(mesh, points, material):
+    """A thin surface seen from either side (leaves): the face and its reverse."""
+    mesh.face(list(points), material)
+    mesh.face(list(reversed(points)), material)
+
+
+def leaf(mesh, base, heading, length, width, rise, droop, segments, material, fold=0.25,
+         tip_width=0.0):
+    """A long leaf from `base` out along `heading` (radians): first rising `rise`, then
+    drooping `droop` towards its tip, `width` wide where it leaves the stem and `tip_width`
+    at its end, folded along its midrib (V-shaped, `fold` of its width deep) so its facets
+    catch the light differently."""
+    dx, dy = math.cos(heading), math.sin(heading)
+    sx, sy = -dy, dx
+    spine, edges = [], []
+    for k in range(segments + 1):
+        t = k / segments
+        reach = length * t
+        z = base[2] + rise * math.sin(math.pi * 0.5 * min(1.0, 2.0 * t)) - droop * t * t
+        half = (width + (tip_width - width) * t) / 2.0 * (1.0 if 0 < k else 0.35)
+        centre = (base[0] + dx * reach, base[1] + dy * reach, z)
+        spine.append((centre[0], centre[1], z - fold * half))
+        edges.append(((centre[0] + sx * half, centre[1] + sy * half, z),
+                      (centre[0] - sx * half, centre[1] - sy * half, z)))
+    for k in range(segments):
+        (l0, r0), (l1, r1) = edges[k], edges[k + 1]
+        both_sides(mesh, [spine[k], spine[k + 1], l1, l0], material)
+        both_sides(mesh, [spine[k], r0, r1, spine[k + 1]], material)
+
+
+def bent_trunk(mesh, height, lean, r_base, r_top, segments, sides, material):
+    """A trunk curving over by `lean` metres at its top; returns the top's centre."""
+    def centre_at(t):
+        return (lean * t * t, 0.0, -0.6 + (height + 0.6) * t)
+
+    for k in range(segments):
+        t0, t1 = k / segments, (k + 1) / segments
+        (x0, y0, z0), (x1, y1, z1) = centre_at(t0), centre_at(t1)
+        r0 = r_base + (r_top - r_base) * t0
+        r1 = r_base + (r_top - r_base) * t1
+        low = ring((x0, y0), r0, sides, 0.0, z0)
+        high = ring((x1, y1), r1, sides, 0.0, z1)
+        for i in range(sides):
+            j = (i + 1) % sides
+            mesh.face([low[i], low[j], high[j], high[i]], material)
+    return centre_at(1.0)
+
+
+def palm(spec):
+    """A palm: a slender trunk, curving over a little for coconut palms, under a crown of
+    long feathery fronds arching out and drooping, with a few coconuts; or for fan palms a
+    straight trunk under a ball of stiff fans."""
+    mesh = Mesh()
+    rng = random.Random(spec["seed"])
+    top = bent_trunk(mesh, spec["height"], spec.get("lean", 0.0), spec.get("base", 0.28),
+                     spec.get("top", 0.18), spec.get("segments", 4), 5, "trunk")
+    fronds = spec["fronds"]
+    if spec.get("fans"):
+        for k in range(fronds):
+            heading = 2 * math.pi * k / fronds + rng.uniform(-0.2, 0.2)
+            tilt = rng.uniform(-0.3, 0.6)
+            dx, dy = math.cos(heading), math.sin(heading)
+            stalk = 0.9
+            hub = (top[0] + dx * stalk, top[1] + dy * stalk, top[2] + tilt * stalk)
+            # A fan: a half disc of a few facets, standing out and up from the stalk's end.
+            fan = [hub]
+            lift = spec["leaf"] * (0.45 + tilt * 0.5)
+            for i in range(5):
+                spread = i / 4.0 - 0.5
+                a = heading + spread * 2.0
+                fan.append((hub[0] + math.cos(a) * spec["leaf"],
+                            hub[1] + math.sin(a) * spec["leaf"],
+                            hub[2] + lift * math.cos(spread)))
+            for i in range(1, 5):
+                both_sides(mesh, [fan[0], fan[i], fan[i + 1]], "leaves")
+    else:
+        for k in range(fronds):
+            heading = 2 * math.pi * k / fronds + rng.uniform(-0.25, 0.25)
+            length = spec["leaf"] * rng.uniform(0.85, 1.1)
+            leaf(mesh, (top[0], top[1], top[2] - 0.1), heading, length, 1.4, 0.7,
+                 rng.uniform(2.8, 3.6), 3, "leaves", tip_width=0.2)
+        # A short upright tuft of young fronds in the middle.
+        tuft = spec.get("tuft", 3)
+        for k in range(tuft):
+            heading = 2 * math.pi * k / tuft + 0.5
+            leaf(mesh, top, heading, spec["leaf"] * 0.45, 0.5, 1.4, 0.2, 2, "leaves")
+        for k in range(spec.get("nuts", 0)):
+            a = 2 * math.pi * k / spec["nuts"]
+            blob(mesh, (top[0] + 0.32 * math.cos(a), top[1] + 0.32 * math.sin(a), top[2] - 0.45),
+                 0.2, "trunk", spec["seed"] + 100 + k, jitter=0.1)
+    return mesh, max(v[2] for v in mesh.verts)
+
+
+def banana(spec):
+    """A banana plant: a few stout green stems under big paddle leaves rising and arching
+    out."""
+    mesh = Mesh()
+    rng = random.Random(spec["seed"])
+    stem = spec["stem"]
+    frustum(mesh, -0.4, stem, 0.2, 0.13, 5, "leaves", cap=False)
+    for k in range(spec["leaves"]):
+        heading = 2 * math.pi * k / spec["leaves"] + rng.uniform(-0.3, 0.3)
+        leaf(mesh, (0.0, 0.0, stem - 0.3 * (k % 3)), heading,
+             spec["leaf"] * rng.uniform(0.8, 1.1), 1.0, 1.3, rng.uniform(0.8, 1.4), 3, "leaves",
+             fold=0.15, tip_width=0.6)
+    return mesh, max(v[2] for v in mesh.verts)
+
+
+def tropical_bush(spec):
+    """A broadleaf shrub of the tropics: a dense clump with big leaves fanning out of it."""
+    mesh, height = bush(spec)
+    rng = random.Random(spec["seed"] + 7)
+    for k in range(spec["blades"]):
+        heading = 2 * math.pi * k / spec["blades"] + rng.uniform(-0.3, 0.3)
+        leaf(mesh, (0.0, 0.0, height * 0.4), heading, spec["blade"], 0.6, 0.4, 0.6, 2,
+             "leaves", fold=0.2, tip_width=0.15)
+    return mesh, max(height, max(v[2] for v in mesh.verts))
+
+
+KINDS = {"conifer": conifer, "broadleaf": broadleaf, "bush": bush, "rock": rock, "palm": palm,
+         "banana": banana, "tropical_bush": tropical_bush}
 
 CATALOGUE = [
     {"name": "conifer_tall", "kind": "conifer", "trunk": 2.4, "sides": 6,
@@ -171,6 +291,16 @@ CATALOGUE = [
      "blocks": [(0.0, 0.0, 0.25, 1.0, (1.3, 1.0, 0.75))]},
     {"name": "rock_pair", "kind": "rock", "seed": 53,
      "blocks": [(0.0, 0.0, 0.2, 0.9, (1.2, 1.0, 0.7)), (1.1, 0.5, 0.0, 0.6, (1.1, 1.0, 0.8))]},
+    # The tropics (#136): palms, banana plants and broadleaf shrubs.
+    {"name": "palm_coconut", "kind": "palm", "seed": 61, "height": 9.5, "lean": 1.6,
+     "fronds": 8, "leaf": 3.6, "nuts": 2, "tuft": 2},
+    {"name": "palm_short", "kind": "palm", "seed": 67, "height": 5.5, "lean": 0.5, "base": 0.32,
+     "top": 0.22, "fronds": 7, "leaf": 3.0, "nuts": 2},
+    {"name": "palm_fan", "kind": "palm", "seed": 71, "height": 6.5, "base": 0.3, "top": 0.24,
+     "fronds": 9, "leaf": 1.5, "fans": True},
+    {"name": "banana", "kind": "banana", "seed": 73, "stem": 2.2, "leaves": 6, "leaf": 2.2},
+    {"name": "tropical_bush", "kind": "tropical_bush", "seed": 79, "blades": 6, "blade": 1.7,
+     "clumps": [(0.0, 0.0, 0.6, 1.0, 0.8), (0.7, -0.4, 0.45, 0.75, 0.75)]},
 ]
 
 
