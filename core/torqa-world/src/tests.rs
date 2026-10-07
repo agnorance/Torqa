@@ -753,6 +753,27 @@ async fn railway_tunnels_under_the_road_stay_below_it() {
 }
 
 #[tokio::test]
+async fn a_railway_bridge_mapped_on_its_own_is_kept() {
+    // #116: a bridge between switches, joining no line of its own; with no track on the
+    // ground to take its height from, it was left out. Its ends stand on the hillside, here
+    // at 520 m.
+    let world = world(&MapData {
+        railways: vec![railway(
+            &[(200.0, 300.0), (200.0, 500.0)],
+            Some(StructureKind::Bridge),
+        )],
+        ..MapData::default()
+    })
+    .await;
+
+    let bed = rail_bed(&world);
+    assert!(bed.len() > 10, "{} points of track", bed.len());
+    for point in &bed {
+        assert!((point[1] - 520.0).abs() < 0.1, "the track at {point:?}");
+    }
+}
+
+#[tokio::test]
 async fn railway_bridges_clear_the_road_and_meet_their_track() {
     // A line crossing the route at 500 m, on a bridge 60 m long over it.
     let map = MapData {

@@ -174,10 +174,18 @@ fn lay_out(
         along.push(along[along.len() - 1] + (b.0 - a.0).hypot(b.1 - a.1));
     }
     // On the ground the terrain's heights; over and under structures nothing yet.
-    let known: Vec<Option<f64>> = points
+    let mut known: Vec<Option<f64>> = points
         .iter()
         .map(|p| p.terrain.filter(|_| p.surface == Surface::Ground))
         .collect();
+    // A bridge or tunnel mapped on its own, between switches where the line does not join on:
+    // its ends stand on the ground, rather than the whole of it being left out (#116).
+    if known.iter().all(Option::is_none)
+        && let Some(last) = points.len().checked_sub(1)
+    {
+        known[0] = points[0].terrain;
+        known[last] = points[last].terrain;
+    }
     let mut heights = fill_between(&known, &along)?;
     heights = smooth(&heights, &along, SMOOTHING_M);
     let mut surfaces: Vec<Surface> = points.iter().map(|p| p.surface).collect();
