@@ -33,8 +33,10 @@ scripts/dev.sh sh -c 'MODELS="chalet_2_m" scripts/render-models.sh'
   colour at every floor), `castle` (#137: a keep with crenellated walls round a steep hipped
   roof, eight-sided corner towers under pointed roofs, small arched windows and an arched
   gate), `lighthouse` (#137: a round tower tapering in bands of white and `accent` colour from a
-  stone plinth, a gallery with a solid railing, a glazed lantern under a pointed cap).
-  Castles' and lighthouses' walls reach 8 m below
+  stone plinth, a gallery with a solid railing, a glazed lantern under a pointed cap) and
+  `tropical` (#136: houses of the subtropics such as Okinawa and Ishigaki, plastered concrete
+  with sun slabs over the windows, under a flat roof with a water tank or a low hipped roof of
+  red tiles with white ridges and wide eaves). Castles' and lighthouses' walls reach 8 m below
   the ground, as they stand on hilltops and rocks.
 - `kit.py` holds the pieces: walls with recessed openings, windows with frames, sills and
   shutters, doors, balconies with solid balustrades, flower boxes, gable, hipped and
@@ -89,8 +91,12 @@ Rendered with `scripts/render-models.sh` (three variants per model; colours vary
 
 `build.py` holds the catalogue and the kinds in one file: `conifer` (a trunk under stacked
 cones, each turned a little), `broadleaf` (a trunk under one or more chunky 20-facet blobs),
-`bush` and `rock`. Shapes are faceted (one normal per face) and lean — 20 to 70 triangles —
-since forests place thousands; random shapes use fixed seeds, so rebuilds give the same files.
+`bush` and `rock`; for the subtropics (#136) `palm` (coconut palms with a curving trunk under
+drooping fronds and a few coconuts, and a fan palm), `banana` (a stem under big paddle leaves)
+and `tropical_bush` (a clump with long leaves fanning out). Shapes are faceted (one normal per
+face) and lean — 20 to 70 triangles, palms and other plants with leaves seen from both sides up
+to about 300 — since forests place thousands; random shapes use fixed seeds, so rebuilds give
+the same files.
 
 ```sh
 scripts/art.sh blender --background --factory-startup --python art/vegetation/build.py
@@ -98,7 +104,7 @@ scripts/art.sh blender --background --factory-startup --python art/vegetation/bu
 
 | Name | Used for |
 |---|---|
-| `leaves` | crowns, fronds, leaves and bushes; the colour varies per plant (palette `plants.conifers`, `plants.broadleaves`, `plants.bushes`) |
+| `leaves` | crowns, fronds, leaves and bushes; the colour varies per plant (palette `plants.conifers`, `plants.broadleaves`, `plants.bushes`, `plants.palms`, `plants.tropical`) |
 | `trunk` | trunks (palette `plants.trunk`) |
 | `rock` | rocks; the colour varies per rock (palette `plants.rocks`) |
 

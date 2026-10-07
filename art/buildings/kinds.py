@@ -843,3 +843,52 @@ def lighthouse(spec):
     mesh.beam(tip, tip + UP * 1.1, 0.07, 0.07, "metal")
     return mesh, footprint(2.0 * r0, 2.0 * r0, gallery, tip.z + 1.1)
 
+
+def tropical(spec):
+    """A house of the subtropics, as on Okinawa and Ishigaki: plastered concrete walls with
+    wide windows under deep sun slabs, and a flat roof behind a low parapet with a water tank
+    on it, or a low hipped roof of red tiles with white ridges and wide eaves."""
+    rect = Rect(spec["length"], spec["width"])
+    storeys = spec["storeys"]
+    eaves = eaves_height(storeys)
+    flat = spec["roof"] == "flat"
+    parapet = 0.5
+    mesh = Mesh()
+    south, east, north, west = rect.facades()
+    for facade in (south, east, north, west):
+        long_side = facade in (south, north)
+        centres = columns(facade.length, 3.4 if long_side else 3.2, 1.8)
+        openings, doors = [], []
+        for storey in range(storeys):
+            floor = FLOOR + storey * STOREY
+            for k, u in enumerate(centres):
+                if facade is south and storey == 0 and k == len(centres) // 2:
+                    doors.append(Opening(u - 0.8, u + 0.8, floor, floor + 2.2, depth=0.2))
+                    continue
+                openings.append(Opening(u - 0.8, u + 0.8, floor + 0.7, floor + 2.2,
+                                        depth=0.18))
+        wall(mesh, facade, -BASEMENT, FLOOR, "stone")
+        wall(mesh, facade, FLOOR, eaves + (parapet if flat else 0.0), "plaster",
+             openings + doors)
+        for o in openings:
+            window(mesh, facade, o, sill=None)
+        for o in doors:
+            door(mesh, facade, o, leaf="door", step="stone")
+    # Sun slabs over the windows of every storey the eaves do not shade.
+    for storey in range(storeys if flat else storeys - 1):
+        z = FLOOR + storey * STOREY + 2.45
+        band(mesh, rect, z, z + 0.16, 0.75, "plaster")
+    if flat:
+        top = flat_roof(mesh, rect, eaves, parapet, cap="plaster", cap_out=0.12,
+                        cap_height=0.2)
+        # A water tank on a stand, as on most roofs there.
+        x, y = rect.length * 0.22, -rect.width * 0.18
+        mesh.box((x - 0.6, y - 0.6, eaves), (x + 0.6, y + 0.6, eaves + 0.5), "metal",
+                 skip=("-z",))
+        frustum(mesh, (x, y), 0.55, 0.55, eaves + 0.5, eaves + 1.6, 8, "metal")
+        disc(mesh, (x, y), 0.55, 8, eaves + 1.6, "metal")
+        return mesh, footprint(rect.length, rect.width, eaves, max(top, eaves + 1.6),
+                               storeys=storeys)
+    ridge = hipped_roof(mesh, rect, eaves, spec.get("pitch", 24.0), overhang=1.1,
+                        under="plaster", fascia="plaster", caps="plaster")
+    return mesh, footprint(rect.length, rect.width, eaves, ridge + 0.2, storeys=storeys)

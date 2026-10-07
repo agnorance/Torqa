@@ -41,6 +41,11 @@
     {"name": "castle_m", "kind": "castle", "roof": "hipped", "length": 22.0, "width": 16.0, "eaves": 11.0, "tower": 3.0, "tower_height": 17.0, "pitch": 48, "cover": "tiles"},
     {"name": "castle_l", "kind": "castle", "roof": "hipped", "length": 34.0, "width": 24.0, "eaves": 13.0, "tower": 3.8, "tower_height": 21.0, "pitch": 45, "cover": "slate"},
     {"name": "lighthouse_s", "kind": "lighthouse", "roof": "flat", "diameter": 5.0, "top": 3.6, "height": 16.0, "bands": 2},
-    {"name": "lighthouse_l", "kind": "lighthouse", "roof": "flat", "diameter": 7.8, "top": 5.0, "height": 27.0, "bands": 3}
+    {"name": "lighthouse_l", "kind": "lighthouse", "roof": "flat", "diameter": 7.8, "top": 5.0, "height": 27.0, "bands": 3},
+    {"name": "tropical_flat_1_m", "kind": "tropical", "roof": "flat", "storeys": 1, "length": 11.0, "width": 9.0},
+    {"name": "tropical_flat_2_m", "kind": "tropical", "roof": "flat", "storeys": 2, "length": 12.0, "width": 9.5},
+    {"name": "tropical_flat_2_l", "kind": "tropical", "roof": "flat", "storeys": 2, "length": 15.0, "width": 11.5},
+    {"name": "tropical_hipped_1_s", "kind": "tropical", "roof": "hipped", "storeys": 1, "length": 9.5, "width": 8.0, "pitch": 24},
+    {"name": "tropical_hipped_1_m", "kind": "tropical", "roof": "hipped", "storeys": 1, "length": 12.5, "width": 10.0, "pitch": 24}
   ]
 }
