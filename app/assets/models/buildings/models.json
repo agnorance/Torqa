@@ -1,5 +1,35 @@
 {
  "models": {
+  "castle_l": {
+   "kind": "castle",
+   "roof": "hipped",
+   "length": 34.0,
+   "width": 24.0,
+   "eaves": 13.0,
+   "height": 31.56,
+   "tower": 3.8,
+   "pitch": 45
+  },
+  "castle_m": {
+   "kind": "castle",
+   "roof": "hipped",
+   "length": 22.0,
+   "width": 16.0,
+   "eaves": 11.0,
+   "height": 25.8,
+   "tower": 3.0,
+   "pitch": 48
+  },
+  "castle_s": {
+   "kind": "castle",
+   "roof": "hipped",
+   "length": 14.0,
+   "width": 11.0,
+   "eaves": 10.0,
+   "height": 22.48,
+   "tower": 2.4,
+   "pitch": 50
+  },
   "chalet_2_m": {
    "kind": "chalet",
    "roof": "gable",
@@ -251,6 +281,22 @@
    "height": 14.253,
    "storeys": 3,
    "pitch": 30
+  },
+  "lighthouse_l": {
+   "kind": "lighthouse",
+   "roof": "flat",
+   "length": 7.8,
+   "width": 7.8,
+   "eaves": 27.0,
+   "height": 34.08
+  },
+  "lighthouse_s": {
+   "kind": "lighthouse",
+   "roof": "flat",
+   "length": 5.0,
+   "width": 5.0,
+   "eaves": 16.0,
+   "height": 22.274
   },
   "office_2_xl": {
    "kind": "office",
