@@ -2914,3 +2914,112 @@ async fn castles_and_lighthouses_from_the_map_get_their_models() {
         highest(&lighthouse)
     );
 }
+
+/// Level ground 20 m above the sea, anywhere: a coastal plain.
+struct Lowland;
+
+impl ElevationModel for Lowland {
+    fn elevation(
+        &mut self,
+        _lat: f64,
+        _lon: f64,
+    ) -> impl std::future::Future<Output = Result<f64, String>> + Send {
+        std::future::ready(Ok(20.0))
+    }
+}
+
+/// Latitude/longitude of a point `east`/`north` metres from `origin`.
+fn at_from(origin: (f64, f64), east: f64, north: f64) -> (f64, f64) {
+    (
+        origin.0 + north / METERS_PER_DEGREE,
+        origin.1 + east / (METERS_PER_DEGREE * origin.0.to_radians().cos()),
+    )
+}
+
+/// The world around a 1 km road due north from `origin` on a coastal plain, with a forest
+/// east of the road and a row of houses west of it.
+async fn forest_and_houses(origin: (f64, f64)) -> World {
+    let mut xml = String::from("<gpx><trk><trkseg>");
+    for i in 0..=100 {
+        let (lat, lon) = at_from(origin, 0.0, f64::from(i) * 10.0);
+        let _ = write!(
+            xml,
+            r#"<trkpt lat="{lat}" lon="{lon}"><ele>20</ele></trkpt>"#
+        );
+    }
+    xml.push_str("</trkseg></trk></gpx>");
+    let road = MapData {
+        roads: vec![torqa_osm::Road {
+            class: torqa_osm::RoadClass::Street,
+            line: vec![at_from(origin, 0.0, -20.0), at_from(origin, 0.0, 1020.0)],
+            structure: None,
+        }],
+        ..MapData::default()
+    };
+    let route = Route::from_gpx_with::<Lowland>(&xml, None, &road)
+        .await
+        .unwrap();
+    let ring = |east: f64, north: f64, half_east: f64, half_north: f64| -> Vec<(f64, f64)> {
+        [
+            (-1.0, -1.0),
+            (1.0, -1.0),
+            (1.0, 1.0),
+            (-1.0, 1.0),
+            (-1.0, -1.0),
+        ]
+        .iter()
+        .map(|&(e, n)| at_from(origin, east + e * half_east, north + n * half_north))
+        .collect()
+    };
+    let forest = Area {
+        cover: LandCover::Forest,
+        outer: vec![ring(110.0, 500.0, 90.0, 90.0)],
+        inner: vec![],
+    };
+    let houses = (0..6_i32)
+        .map(|k| Building {
+            id: 70 + i64::from(k),
+            outline: ring(-40.0, 200.0 + 80.0 * f64::from(k), 6.0, 4.75),
+            height: None,
+            levels: None,
+            color: None,
+        })
+        .collect();
+    let map = MapData {
+        areas: vec![forest],
+        buildings: houses,
+        ..MapData::default()
+    };
+    generate(&route, &mut Lowland, &map, &mut |_, _| {}).await
+}
+
+#[tokio::test]
+async fn the_subtropics_grow_palms_and_build_houses_for_the_heat() {
+    // The same forest and houses on Ishigaki (24.3° N) and on the Swiss plateau.
+    let ishigaki = forest_and_houses((24.34, 124.16)).await;
+    let plateau = forest_and_houses((46.95, 7.44)).await;
+
+    // Palms among the broadleaf trees, banana plants and tropical shrubs, but no conifers.
+    assert!(!plants_of(&ishigaki, &["palm"]).is_empty(), "no palms");
+    assert!(!plants_of(&ishigaki, &["broadleaf"]).is_empty());
+    assert!(plants_of(&ishigaki, &["conifer", "bush"]).is_empty());
+    // At home conifers and bushes as before, nothing tropical.
+    assert!(!plants_of(&plateau, &["conifer"]).is_empty());
+    assert!(plants_of(&plateau, &["palm", "banana", "tropical_bush"]).is_empty());
+
+    // Houses with flat roofs or low red-tiled ones on Ishigaki, the usual houses at home.
+    let models =
+        |world: &World| -> Vec<String> { placed(world).into_iter().map(|m| m.model).collect() };
+    let tropical = models(&ishigaki);
+    assert_eq!(tropical.len(), 6, "{tropical:?}");
+    assert!(
+        tropical.iter().all(|m| m.starts_with("tropical_")),
+        "{tropical:?}"
+    );
+    let temperate = models(&plateau);
+    assert_eq!(temperate.len(), 6, "{temperate:?}");
+    assert!(
+        temperate.iter().all(|m| m.starts_with("house_")),
+        "{temperate:?}"
+    );
+}

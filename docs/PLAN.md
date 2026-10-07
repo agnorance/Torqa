@@ -213,6 +213,9 @@ the realistic look's textures and patterns were replaced step by step.
   lighthouses by name, as OpenMapTiles has no class for them), Blender-made castles (keep,
   crenellations, corner towers) and lighthouses (banded tower, gallery, lantern), lighthouses
   without an outline standing on their own
+- [x] Tropical worlds (#136): palms, banana plants and tropical shrubs, and houses built for
+  the heat (flat roofs with water tanks, low red-tiled hipped roofs) within 27° of the
+  equator below 1,200 m
 - [x] Quality presets Low–Ultra in settings, frame-time budget per preset (60 fps; a lower
   preset is suggested when a ride stays below)
 - [x] Asset pipeline: Blender 5.2 LTS in an x86-64 art container (`scripts/art.sh`), scripted

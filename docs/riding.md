@@ -71,6 +71,12 @@ is, so Torqa infers it from where it stands and its size. That gives:
 - shops, cafés and restaurants with a glazed front and an awning onto their street, where the map
   has one.
 
+In the subtropics (within 27° of the equator, below 1,200 m: Okinawa, Ishigaki, Hawaii,
+southern Florida and the like) the world changes with the climate: palms, banana plants and
+broadleaf shrubs grow instead of conifers and the usual bushes, and houses are built for the
+heat — light plastered concrete under flat roofs with a water tank, or under low hipped roofs
+of red tiles with white ridges and wide eaves. There are no chalets or Bernese farmhouses there.
+
 Mapped heights and façade colours are used where the map has them. Close to you, buildings whose
 outline suits one are models made in Blender, chunky and faceted in flat pastel colours:
 recessed windows with shutters, balconies with geraniums, cornices, canopies, clock towers.

@@ -4,8 +4,8 @@
 //! hotels, offices and public buildings (schools, hospitals, town halls) from the points of
 //! interest in them or the land they stand on, halls on industrial land, chalets in the
 //! mountains, farmhouses as large buildings in the countryside, blocks from their height or
-//! size in towns, sheds from their size, and houses otherwise. Each kind gets its own
-//! proportions, roof, materials and details.
+//! size in towns, sheds from their size, and houses otherwise — in the subtropics houses built
+//! for the heat (#136). Each kind gets its own proportions, roof, materials and details.
 
 mod models;
 mod parts;
@@ -17,6 +17,7 @@ use std::sync::LazyLock;
 use torqa_osm::{Building, MapData};
 use torqa_routes::LocalProjection;
 
+use crate::climate::Climate;
 use crate::{BuildingCell, HeightGrid, MeshData, hash, palette};
 use models::{Fit, Wanted};
 pub(crate) use parts::Style;
@@ -95,6 +96,8 @@ static FLAT: Colours = LazyLock::new(|| palette::list("buildings.flat_roofs"));
 static CASTLE_WALLS: Colours = LazyLock::new(|| palette::list("buildings.castle_walls"));
 /// The bands and caps of lighthouses: coral red first, then teal and plum.
 static BEACON: Colours = LazyLock::new(|| palette::list("buildings.beacon"));
+/// Houses in the subtropics: whites and pale pastels.
+static TROPICAL_WALLS: Colours = LazyLock::new(|| palette::list("buildings.tropical_walls"));
 /// Spires: slate, copper green, coral tiles.
 static SPIRES: Colours = LazyLock::new(|| palette::list("buildings.spires"));
 /// Shop fronts' frames, and awnings.
@@ -190,6 +193,8 @@ pub(crate) struct Plot<'a> {
     pub(crate) purpose: Option<Purpose>,
     /// A castle or lighthouse point lies in or by it.
     pub(crate) landmark: Option<Landmark>,
+    /// The climate of the region it stands in.
+    pub(crate) climate: Climate,
 }
 
 /// What a building is used for, from the points of interest in or by it; later ones win over
@@ -472,6 +477,7 @@ pub(crate) fn add(chunk: &mut ChunkBuildings, plot: &Plot, heights: &HeightGrid,
     let area = signed_area(footprint);
     let dice = Dice(plot.building.id);
     let kind = kind(plot, area, ground, &dice);
+    let tropical = plot.climate.tropical_at(ground);
     let special = matches!(kind, Kind::Church | Kind::Castle | Kind::Lighthouse);
     let fill = if special {
         RECTANGULAR_CHURCH
@@ -479,7 +485,7 @@ pub(crate) fn add(chunk: &mut ChunkBuildings, plot: &Plot, heights: &HeightGrid,
         RECTANGULAR
     };
     let rect = Rect::around(footprint).filter(|r| area / r.area() >= fill);
-    let design = (!special).then(|| design(kind, plot.building, rect.is_some(), &dice));
+    let design = (!special).then(|| design(kind, plot.building, rect.is_some(), tropical, &dice));
     let basement = if matches!(kind, Kind::Castle | Kind::Lighthouse) {
         DEEP_BASEMENT
     } else {
@@ -491,6 +497,7 @@ pub(crate) fn add(chunk: &mut ChunkBuildings, plot: &Plot, heights: &HeightGrid,
         .and_then(|rect| {
             let wanted = Wanted {
                 kind,
+                tropical,
                 chapel: area < CHAPEL_AREA,
                 storeys: design
                     .as_ref()
@@ -762,7 +769,9 @@ fn kind(plot: &Plot, area: f64, ground: f64, dice: &Dice) -> Kind {
             Kind::Block
         };
     }
-    let alpine = dice.roll(0) < smoothstep(CHALETS_FROM, CHALETS_ONLY, ground);
+    // The subtropics have neither chalets nor Bernese farmhouses.
+    let tropical = plot.climate.tropical_at(ground);
+    let alpine = !tropical && dice.roll(0) < smoothstep(CHALETS_FROM, CHALETS_ONLY, ground);
     match plot.setting {
         Setting::Industrial | Setting::Commercial if area < 80.0 => Kind::Shed,
         Setting::Industrial => Kind::Hall,
@@ -773,7 +782,7 @@ fn kind(plot: &Plot, area: f64, ground: f64, dice: &Dice) -> Kind {
         Setting::Town if area > 400.0 => Kind::Block,
         Setting::Countryside if area > 1500.0 => Kind::Hall,
         _ if alpine => Kind::Chalet,
-        Setting::Countryside if area > 220.0 => Kind::Farmhouse,
+        Setting::Countryside if area > 220.0 && !tropical => Kind::Farmhouse,
         _ => Kind::House,
     }
 }
@@ -873,7 +882,15 @@ struct Trim {
     every_column: bool,
 }
 
-fn design(kind: Kind, building: &Building, rectangular: bool, dice: &Dice) -> Design {
+/// How a building of `kind` is built; houses in the subtropics (`tropical`) are built for the
+/// heat.
+fn design(
+    kind: Kind,
+    building: &Building,
+    rectangular: bool,
+    tropical: bool,
+    dice: &Dice,
+) -> Design {
     let recipe = Recipe {
         kind,
         building,
@@ -881,6 +898,7 @@ fn design(kind: Kind, building: &Building, rectangular: bool, dice: &Dice) -> De
         dice,
     };
     match kind {
+        Kind::House if tropical => recipe.tropical_house(),
         Kind::House => recipe.house(),
         Kind::Chalet => recipe.chalet(),
         Kind::Farmhouse => recipe.farmhouse(),
@@ -958,6 +976,50 @@ impl Recipe<'_> {
             },
             chimney: self.dice.roll(10) < 0.6,
             gable_windows: Some(*WHITE),
+            balcony: false,
+            trim: None,
+        }
+    }
+
+    /// A house of the subtropics (#136), as on Okinawa and Ishigaki: light plastered concrete
+    /// under a flat roof behind a low parapet, or under a low hipped roof of red tiles with
+    /// wide eaves against sun and rain; no chimney.
+    fn tropical_house(&self) -> Design {
+        let wall = self.facade(&TROPICAL_WALLS, Style::Plaster);
+        let flat = !self.rectangular || self.dice.roll(4) < 0.55;
+        // Concrete houses often have two storeys, tiled ones mostly one.
+        let one_storey = if flat { 0.4 } else { 0.8 };
+        let count = if self.dice.roll(3) < one_storey {
+            1.0
+        } else {
+            2.0
+        };
+        Design {
+            kind: self.kind,
+            walls: storeys(count),
+            windows: true,
+            roof: if flat {
+                Roof::Flat { parapet: 0.5 }
+            } else {
+                Roof::Hipped
+            },
+            pitch_degrees: 22.0 + 5.0 * self.dice.roll(6),
+            max_rise: 3.5,
+            overhang: self.overhang(0.9, 0.4),
+            verge: self.overhang(0.9, 0.4),
+            wall,
+            base: None,
+            roof_paint: RoofPaint {
+                top: if flat {
+                    self.paint(&FLAT, 8, Style::Flat)
+                } else {
+                    self.paint(&TILES[..2], 8, Style::Tiles)
+                },
+                under: wall.with(Style::Blank),
+                gables: wall.with(Style::Blank),
+            },
+            chimney: false,
+            gable_windows: None,
             balcony: false,
             trim: None,
         }
@@ -1964,6 +2026,7 @@ mod tests {
             shop: None,
             purpose: None,
             landmark: None,
+            climate: Climate::Temperate,
         }
     }
 
@@ -2202,5 +2265,52 @@ mod tests {
         // A lighthouse is no shed, however small.
         assert_eq!(kind(&plots[2], 36.0, 5.0, &Dice(3)), Kind::Lighthouse);
         assert_eq!(kind(&plots[4], 256.0, 450.0, &Dice(5)), Kind::Church);
+    }
+
+    #[test]
+    fn the_subtropics_have_houses_built_for_the_heat() {
+        let tropical = |id: i64, area: f64, ground: f64| {
+            let building = untagged(id);
+            let plot = Plot {
+                climate: Climate::Tropical,
+                ..plot(&building, Setting::Countryside, false)
+            };
+            kind(&plot, area, ground, &Dice(id))
+        };
+        // Neither chalets on the hills nor Bernese farmhouses: houses.
+        for id in 0..200 {
+            assert_eq!(tropical(id, 120.0, 900.0), Kind::House);
+            assert_eq!(tropical(id, 600.0, 20.0), Kind::House);
+        }
+        // Up in the highlands the tropics are temperate.
+        assert!((0..200).all(|id| tropical(id, 120.0, 1500.0) == Kind::Chalet));
+
+        let designs: Vec<Design> = (0..100)
+            .map(|id| design(Kind::House, &untagged(id), true, true, &Dice(id)))
+            .collect();
+        let flat = designs
+            .iter()
+            .filter(|d| matches!(d.roof, Roof::Flat { .. }))
+            .count();
+        assert!((20..80).contains(&flat), "{flat} flat roofs");
+        for d in &designs {
+            assert!(!d.chimney);
+            assert!(luminance(d.wall.rgb) > 0.7, "light walls: {:?}", d.wall.rgb);
+            if d.roof == Roof::Hipped {
+                assert!(d.pitch_degrees < 28.0 && d.overhang >= 0.9);
+            } else {
+                assert!(matches!(d.roof, Roof::Flat { .. }), "{:?}", d.roof);
+            }
+        }
+        // Outside the tropics the same houses keep pitched roofs and chimneys.
+        let temperate: Vec<Design> = (0..100)
+            .map(|id| design(Kind::House, &untagged(id), true, false, &Dice(id)))
+            .collect();
+        assert!(
+            temperate
+                .iter()
+                .all(|d| d.roof != Roof::Flat { parapet: 0.5 })
+        );
+        assert!(temperate.iter().any(|d| d.chimney));
     }
 }

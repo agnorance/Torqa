@@ -1,5 +1,5 @@
 //! Trees, bushes and rocks (Blender models, `art/vegetation`), and grass and flowers along the
-//! road (R45, ADR 0011).
+//! road (R45, ADR 0011); in the subtropics palms, banana plants and tropical shrubs (#136).
 
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
@@ -9,6 +9,7 @@ use torqa_osm::LandCover;
 
 use crate::HeightGrid;
 use crate::buildings::Point;
+use crate::climate::Climate;
 use crate::landcover::LandIndex;
 use crate::palette;
 use crate::road::RoadIndex;
@@ -43,6 +44,11 @@ pub(crate) enum Plant {
     Broadleaf,
     Bush,
     Rock,
+    /// Coconut and fan palms.
+    Palm,
+    Banana,
+    /// Broadleaf shrubs of the tropics.
+    TropicalBush,
 }
 
 impl Plant {
@@ -52,6 +58,9 @@ impl Plant {
             Self::Broadleaf => "broadleaf",
             Self::Bush => "bush",
             Self::Rock => "rock",
+            Self::Palm => "palm",
+            Self::Banana => "banana",
+            Self::TropicalBush => "tropical_bush",
         }
     }
 
@@ -61,14 +70,16 @@ impl Plant {
             Self::Broadleaf => "plants.broadleaves",
             Self::Bush => "plants.bushes",
             Self::Rock => "plants.rocks",
+            Self::Palm => "plants.palms",
+            Self::Banana | Self::TropicalBush => "plants.tropical",
         }
     }
 
     /// Distance kept from the road centre: the road's half width and the plant's reach.
     fn clearance(self) -> f64 {
         match self {
-            Self::Conifer | Self::Broadleaf => 8.0,
-            Self::Bush => 5.0,
+            Self::Conifer | Self::Broadleaf | Self::Palm => 8.0,
+            Self::Bush | Self::Banana | Self::TropicalBush => 5.0,
             Self::Rock => 4.5,
         }
     }
@@ -77,7 +88,8 @@ impl Plant {
     fn scale(self, dice: f64) -> f64 {
         match self {
             Self::Conifer | Self::Broadleaf => 0.75 + dice * 0.6,
-            Self::Bush => 0.7 + dice * 0.7,
+            Self::Palm | Self::Banana => 0.8 + dice * 0.45,
+            Self::Bush | Self::TropicalBush => 0.7 + dice * 0.7,
             Self::Rock => 0.6 + dice * 1.4,
         }
     }
@@ -104,7 +116,7 @@ static MODELS: LazyLock<BTreeMap<String, Vec<String>>> = LazyLock::new(|| {
     by_kind
 });
 
-/// The kind (`conifer`, `broadleaf`, `bush`, `rock`) of a vegetation model.
+/// The kind (`conifer`, `broadleaf`, `bush`, `rock`, `palm`, …) of a vegetation model.
 #[cfg(test)]
 pub(crate) fn kind_of(model: &str) -> Option<&'static str> {
     MODELS
@@ -191,7 +203,7 @@ impl Footprint {
 }
 
 /// What plants are placed on: the chunk's ground, its land cover, the road ridden, the map's
-/// other streets and the buildings around.
+/// other streets and the buildings around, in the region's climate.
 #[derive(Clone, Copy)]
 pub(crate) struct Ground<'a> {
     pub(crate) heights: &'a HeightGrid,
@@ -199,6 +211,7 @@ pub(crate) struct Ground<'a> {
     pub(crate) road: &'a RoadIndex,
     pub(crate) streets: &'a Clearance,
     pub(crate) buildings: &'a [Footprint],
+    pub(crate) climate: Climate,
 }
 
 impl Ground<'_> {
@@ -225,8 +238,9 @@ impl Ground<'_> {
 /// Places trees, bushes and rocks within the square `[origin, origin + size]` (metres
 /// east/north): forests of conifers and broadleaf trees (conifers higher up) with bushes under
 /// them near the road; near the road also a few solitary trees and bushes in meadows and
-/// gardens, and rocks on rocky ground and steep slopes. Nothing on the road or streets, in
-/// water or in buildings.
+/// gardens, and rocks on rocky ground and steep slopes. In the subtropical lowlands palms
+/// take the conifers' place, and banana plants and tropical shrubs the bushes'. Nothing on the
+/// road or streets, in water or in buildings.
 pub(crate) fn place(
     origin: (f64, f64),
     size: f64,
@@ -285,6 +299,7 @@ fn choose(
     if cover == Some(LandCover::Water) {
         return None;
     }
+    let tropical = ground.climate.tropical_at(height);
     let near = road_distance.is_some();
     if near && (cover == Some(LandCover::Rock) || ground.slope(east, north) > ROCKY_SLOPE) {
         let share = if cover == Some(LandCover::Rock) {
@@ -297,11 +312,23 @@ fn choose(
     match cover {
         Some(LandCover::Forest) => {
             if road_distance.is_some_and(|d| d < UNDERSTOREY_DISTANCE) && dice(0x3b9a) < 0.12 {
-                return Some(Plant::Bush);
+                return Some(if tropical {
+                    tropical_shrub(dice(0x2d4f), 0.3)
+                } else {
+                    Plant::Bush
+                });
             }
             let keep = (NEAR_SPACING / FAR_SPACING).powi(2);
             if !near && dice(0x9e37) > keep {
                 return None;
+            }
+            if tropical {
+                // Evergreen broadleaf forest, palms among it.
+                return Some(if dice(0x7777) < TROPICAL_FOREST_PALMS {
+                    Plant::Palm
+                } else {
+                    Plant::Broadleaf
+                });
             }
             // Conifers dominate higher up.
             let conifer_share = ((height - 600.0) / 800.0).clamp(0.3, 0.9);
@@ -320,14 +347,42 @@ fn choose(
             };
             let roll = dice(0x51a3);
             if roll < tree {
-                Some(Plant::Broadleaf)
+                // In the subtropics most trees standing alone are palms.
+                Some(if tropical && dice(0x6a09) < TROPICAL_OPEN_PALMS {
+                    Plant::Palm
+                } else {
+                    Plant::Broadleaf
+                })
             } else if roll < tree + shrub {
-                Some(Plant::Bush)
+                Some(if tropical {
+                    // Banana plants grow in gardens more than in the open.
+                    let bananas = if cover == Some(LandCover::Residential) {
+                        0.4
+                    } else {
+                        0.15
+                    };
+                    tropical_shrub(dice(0x2d4f), bananas)
+                } else {
+                    Plant::Bush
+                })
             } else {
                 None
             }
         }
         _ => None,
+    }
+}
+
+/// Share of palms among the trees of tropical forests, and among trees standing alone there.
+const TROPICAL_FOREST_PALMS: f64 = 0.25;
+const TROPICAL_OPEN_PALMS: f64 = 0.7;
+
+/// A shrub of the tropics: a banana plant for a `roll` below `bananas`, else a broadleaf shrub.
+fn tropical_shrub(roll: f64, bananas: f64) -> Plant {
+    if roll < bananas {
+        Plant::Banana
+    } else {
+        Plant::TropicalBush
     }
 }
 
@@ -459,7 +514,15 @@ mod tests {
     fn every_plant_has_models_with_files_and_palette_colours() {
         let directory =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../app/assets/models/vegetation");
-        for plant in [Plant::Conifer, Plant::Broadleaf, Plant::Bush, Plant::Rock] {
+        for plant in [
+            Plant::Conifer,
+            Plant::Broadleaf,
+            Plant::Bush,
+            Plant::Rock,
+            Plant::Palm,
+            Plant::Banana,
+            Plant::TropicalBush,
+        ] {
             let models = MODELS.get(plant.kind()).map_or(&[][..], Vec::as_slice);
             assert!(!models.is_empty(), "no {} models", plant.kind());
             for name in models {
