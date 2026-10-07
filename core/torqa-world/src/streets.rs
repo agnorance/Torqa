@@ -485,6 +485,11 @@ impl Levels {
         Self { segments, cells }
     }
 
+    /// Whether there are no paved streets at all, so the ground is nowhere levelled for one.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.segments.is_empty()
+    }
+
     /// The paved street whose edge lies nearest to (`east`, `north`), if that is within its
     /// levelled ground (`LEVEL_VERGE_M` and `LEVEL_REACH_M` beyond its edge) and `extra`
     /// metres more: the distance from its centre line, its half width and the nearest point of

@@ -655,6 +655,9 @@ impl HeightGrid {
     /// come first.
     fn shaped_at(&self, east: f64, north: f64, shapers: &Shapers<'_>) -> f64 {
         let natural = self.natural_at(east, north);
+        if shapers.streets.is_empty() {
+            return shape(natural, &shapers.near(east, north, LEVEL_REACH));
+        }
         let levelled = shapers.streets.nearest(east, north, 0.0).map_or(
             natural,
             |(distance, half, (foot_east, foot_north))| {

@@ -2484,10 +2484,12 @@ mod tests {
         path
     }
 
-    /// Calls `update` like a 60 fps frame loop until `done` returns true (or 30 s pass).
+    /// Calls `update` like a 60 fps frame loop until `done` returns true (or 60 s pass: a
+    /// guard against hanging, not a target; building a world of 56 chunks in a debug build
+    /// takes about 30 s on a shared CI runner with the other tests running alongside).
     fn run_until(app: &mut App, mut done: impl FnMut(&AppEvent) -> bool) -> Vec<AppEvent> {
         let mut seen = Vec::new();
-        for _ in 0..1800 {
+        for _ in 0..3600 {
             std::thread::sleep(Duration::from_millis(16));
             for event in app.update(Duration::from_millis(16)) {
                 let stop = done(&event);
