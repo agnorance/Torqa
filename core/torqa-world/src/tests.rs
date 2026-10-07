@@ -354,6 +354,53 @@ async fn streets_meeting_the_road_ridden_get_kerbs_at_its_edge() {
     assert!(!paved(3.6, 600.0 + 3.35));
 }
 
+#[tokio::test]
+async fn streets_on_a_hillside_are_level_across_the_ground_shaped_around_them() {
+    use torqa_osm::{Road, RoadClass};
+
+    // #116: a street along the hillside, which rises 10 % eastwards. It lay tilted with the
+    // slope, its uphill edge half a metre above its downhill one.
+    let world = world(&MapData {
+        roads: vec![Road {
+            class: RoadClass::Street,
+            line: vec![at(200.0, 100.0), at(200.0, 900.0)],
+            structure: None,
+        }],
+        ..MapData::default()
+    })
+    .await;
+
+    // The natural ground at the street's centre line.
+    let level = 500.0 + 0.1 * 200.0;
+    for north in (200..=800).step_by(50) {
+        let z = -(north as f32);
+        let edge = |x: f32| street_at(&world, x, z).expect("the street");
+        let (west, east) = (edge(200.0 - 2.5), edge(200.0 + 2.5));
+        assert!(
+            (west - east).abs() < 0.02,
+            "a tilted street at {north}: {west} west, {east} east"
+        );
+        assert!((west - level).abs() < 0.15, "the street at {west}");
+        // The ground beside it level with it, then back on the natural slope a little way out:
+        // cut into the hillside above, banked down below.
+        for x in [200.0 - 5.0, 200.0 + 5.0] {
+            let ground = ground_at(&world, x, z).expect("ground");
+            assert!(
+                (ground - level).abs() < 0.05,
+                "the ground beside the street at {x}, {north}: {ground}"
+            );
+        }
+        for x in [200.0 - 25.0, 200.0 + 25.0] {
+            let ground = ground_at(&world, x, z).expect("ground");
+            let natural = 500.0 + 0.1 * x;
+            assert!(
+                (ground - natural).abs() < 0.05,
+                "the ground away from the street at {x}, {north}: {ground}, not {natural}"
+            );
+        }
+    }
+}
+
 /// The railways' bed along its middle, as the mesh has it: (x, height, z) per point.
 fn rail_bed(world: &World) -> Vec<[f32; 3]> {
     world
@@ -571,17 +618,19 @@ async fn roundabouts_get_a_raised_island_with_a_kerb() {
     // How far the topmost ground lies over the natural slope (0.1 m per metre east).
     let lift = |x: f32, z: f32| top_of_ground(&world, x, z).map(|top| top - (500.0 + 0.1 * x));
 
-    // Inside the ring, the island stands 20 cm up; on the ring and outside, the ground is as
-    // it was.
+    // Inside the ring, the island stands 20 cm up from the ground (which the ring levels
+    // beside it, #116); on the ring and outside, the ground is as it was.
     for (x, z) in [
         (200.0, -500.0),
         (210.0, -505.0),
         (190.0, -492.0),
         (214.0, -500.0),
     ] {
-        let up = lift(x, z).expect("ground");
+        let top = top_of_ground(&world, x, z).expect("island");
+        let up = top - ground_at(&world, x, z).expect("ground");
         assert!((up - 0.2).abs() < 0.02, "island at {up} m at {x}, {z}");
     }
+    assert!(lift(200.0, -500.0).is_some_and(|up| (up - 0.2).abs() < 0.02));
     for (x, z) in [
         (220.0, -500.0),
         (230.0, -500.0),
@@ -2363,7 +2412,8 @@ async fn streams_run_in_channels_and_pass_under_roads_and_streets() {
                 culvert || water > ground,
                 "water {water} under ground {ground} at {x}, {z}"
             );
-            if x.abs() > LEVEL_REACH as f32 {
+            // Away from the road and the street, which level the land across them (#116).
+            if x.abs() > LEVEL_REACH as f32 && (x - 100.0).abs() > 20.0 {
                 assert!(
                     (water - (land - 0.48)).abs() < 0.05,
                     "water {water} by land at {land} at {x}, {z}"
