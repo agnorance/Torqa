@@ -2840,3 +2840,77 @@ async fn mapped_building_colours_turn_into_palette_colours() {
         assert!(luminance > 0.6, "dark wall {r} {g} {b}");
     }
 }
+
+/// A closed eight-sided ring (a round tower) of radius `radius` around a point.
+fn round(east: f64, north: f64, radius: f64) -> Vec<(f64, f64)> {
+    (0..=8)
+        .map(|k| {
+            let angle = std::f64::consts::TAU * f64::from(k % 8) / 8.0;
+            at(east + radius * angle.cos(), north + radius * angle.sin())
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn castles_and_lighthouses_from_the_map_get_their_models() {
+    // A 22 × 16 m castle with its point inside, a round lighthouse with its point beside it,
+    // and a lighthouse the map has as a point only.
+    let castle = Building {
+        id: 61,
+        outline: rectangle(80.0, 300.0, 11.0, 8.0),
+        height: None,
+        levels: None,
+        color: None,
+    };
+    let tower = Building {
+        id: 62,
+        outline: round(80.0, 700.0, 3.0),
+        ..castle.clone()
+    };
+    let world = world(&MapData {
+        buildings: vec![castle, tower],
+        castles: vec![at(80.0, 302.0)],
+        lighthouses: vec![at(80.0, 704.0), at(-60.0, 500.0)],
+        ..MapData::default()
+    })
+    .await;
+
+    let models = placed(&world);
+    let near = |model: &Placed, (east, north): (f32, f32)| {
+        (model.origin[0] - east).hypot(model.origin[2] + north) < 1.0
+    };
+    let castles: Vec<&Placed> = models
+        .iter()
+        .filter(|m| m.model.starts_with("castle_"))
+        .collect();
+    assert_eq!(castles.len(), 1, "one castle");
+    assert!(near(castles[0], (80.0, 300.0)));
+    let lighthouses: Vec<&Placed> = models
+        .iter()
+        .filter(|m| m.model.starts_with("lighthouse_"))
+        .collect();
+    assert_eq!(lighthouses.len(), 2, "two lighthouses");
+    assert!(lighthouses.iter().any(|m| near(*m, (80.0, 700.0))));
+    assert!(
+        lighthouses.iter().any(|m| near(*m, (-60.0, 500.0))),
+        "the lighthouse without an outline stands on its own"
+    );
+    // Round towers are not stretched out of round.
+    for lighthouse in &lighthouses {
+        assert!((length(lighthouse.x) - length(lighthouse.z)).abs() < 0.05);
+    }
+    // Far off, the castle's shell rises to towers and a roof well above its walls, and the
+    // lone lighthouse's to its lantern.
+    let castle = building_faces(&world, (80.0, 300.0), 30.0);
+    assert!(
+        highest(&castle) > slope_at(91.0) + 18.0,
+        "{}",
+        highest(&castle)
+    );
+    let lighthouse = building_faces(&world, (-60.0, 500.0), 10.0);
+    assert!(
+        highest(&lighthouse) > slope_at(-57.0) + 12.0,
+        "{}",
+        highest(&lighthouse)
+    );
+}

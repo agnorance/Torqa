@@ -90,7 +90,9 @@
     "gold": "#f4c16e",
     "garage": "#e4ddd0",
     "chimney": "#bf9282",
-    "soot": "#614367"
+    "soot": "#614367",
+    "castle_walls": ["#e4ddd0", "#c3bbb4", "#d6c5a2", "#f2ebd9"],
+    "beacon": ["#e2705e", "#628388", "#614367"]
   },
   "rider_female": {
     "jersey": "#efb5cc",

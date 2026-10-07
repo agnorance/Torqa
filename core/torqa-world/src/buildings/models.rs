@@ -21,10 +21,10 @@ pub(crate) const MAX_STRETCH: f64 = 1.25;
 pub(crate) struct Model {
     #[serde(skip)]
     pub(crate) name: String,
-    /// `house`, `chalet`, `farmhouse`, `church`, `chapel`, `shed`, `office`, `public` or
-    /// `hotel`.
+    /// `house`, `chalet`, `farmhouse`, `church`, `chapel`, `shed`, `office`, `public`,
+    /// `hotel`, `castle` or `lighthouse`.
     kind: String,
-    /// `gable` or `hipped`.
+    /// `gable`, `hipped` or `flat`.
     pub(crate) roof: String,
     /// The footprint its walls stand on: along its x axis and across.
     pub(crate) length: f64,
@@ -84,6 +84,8 @@ pub(crate) fn fitting(rect: &Rect, wanted: Wanted, dice: &Dice) -> Option<Fit> {
         Kind::Office => "office",
         Kind::Public => "public",
         Kind::Hotel => "hotel",
+        Kind::Castle => "castle",
+        Kind::Lighthouse => "lighthouse",
         Kind::Block | Kind::Hall => return None,
     };
     let (length, width) = (2.0 * rect.half_length, 2.0 * rect.half_width);
@@ -220,6 +222,32 @@ mod tests {
             assert_eq!(fit.model.kind, name);
             assert_eq!(fit.model.storeys, Some(storeys));
             assert_eq!(fit.model.roof == "hipped", hipped);
+        }
+    }
+
+    #[test]
+    fn castles_and_lighthouses_get_their_models() {
+        // A castle's keep, 24 × 17 m, and a lighthouse 6 m across (round, so a square).
+        let keep = Rect {
+            centre: (0.0, 0.0),
+            axis: (1.0, 0.0),
+            half_length: 12.0,
+            half_width: 8.5,
+        };
+        let tower = Rect::square((0.0, 0.0), (1.0, 0.0), 3.0);
+        for (rect, kind, name) in [
+            (keep, Kind::Castle, "castle"),
+            (tower, Kind::Lighthouse, "lighthouse"),
+        ] {
+            let wanted = Wanted {
+                kind,
+                chapel: false,
+                storeys: None,
+                hipped: false,
+            };
+            let fit = fitting(&rect, wanted, &Dice(9)).expect("a model");
+
+            assert_eq!(fit.model.kind, name);
         }
     }
 

@@ -55,6 +55,10 @@ rounded corners, and buildings stand where they are mapped. The map rarely says 
 is, so Torqa infers it from where it stands and its size. That gives:
 
 - churches with a tower, and chapels with a turret on the roof;
+- castles with crenellated walls and round corner towers, where the map has a castle (ruins
+  stay as mapped);
+- lighthouses in bands of white and red with a lantern on top, where the map names one, also
+  where it has no outline for the tower;
 - chalets with timber walls and deep eaves in the mountains;
 - farmhouses under big roofs in the countryside;
 - apartment blocks, and metal-clad halls on industrial land;

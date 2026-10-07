@@ -227,7 +227,8 @@ pub async fn generate<M: ElevationModel>(
     // Announce the step before the slower preparation below.
     progress(0, total);
     let land = LandIndex::new(&map.areas, &projection);
-    let buildings = buildings_by_chunk(map, &projection, &road, &land);
+    let lone_lighthouses = buildings::lone_lighthouses(map, &projection);
+    let buildings = buildings_by_chunk((map, &lone_lighthouses), &projection, &road, &land);
     let ways = Ways::new(map, &projection, &road, model).await;
     let Ways {
         streets,
@@ -322,9 +323,10 @@ pub async fn generate<M: ElevationModel>(
     world
 }
 
-/// Buildings near the route, grouped by the chunk containing their first corner.
+/// Buildings near the route, the map's and `extra` ones (lighthouses standing alone), grouped
+/// by the chunk containing their first corner.
 fn buildings_by_chunk<'a>(
-    map: &'a MapData,
+    (map, extra): (&'a MapData, &'a [torqa_osm::Building]),
     projection: &LocalProjection,
     road: &RoadIndex,
     land: &LandIndex,
@@ -349,7 +351,7 @@ fn buildings_by_chunk<'a>(
         .chain(road.samples(3.0));
     let frontage = buildings::Frontage::new(streets);
     let mut plots = Vec::new();
-    for building in &map.buildings {
+    for building in map.buildings.iter().chain(extra) {
         let footprint = buildings::footprint(building, projection);
         let Some(&(east, north)) = footprint.first() else {
             continue;
@@ -387,9 +389,16 @@ fn buildings_by_chunk<'a>(
             church: false,
             shop: None,
             purpose: None,
+            landmark: None,
         });
     }
     buildings::mark_churches(&mut plots, &project(&map.churches));
+    for (points, landmark) in [
+        (&map.castles, buildings::Landmark::Castle),
+        (&map.lighthouses, buildings::Landmark::Lighthouse),
+    ] {
+        buildings::mark_landmarks(&mut plots, &project(points), landmark);
+    }
     for (points, purpose) in [
         (&map.offices, buildings::Purpose::Office),
         (&map.hotels, buildings::Purpose::Hotel),

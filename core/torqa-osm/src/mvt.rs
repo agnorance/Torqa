@@ -52,6 +52,20 @@ pub(crate) fn merge(
                         }
                     }
                 }
+                "poi" if castle(tags.text("class"), tags.text("subclass")) => {
+                    for point in points(geometry) {
+                        if projection.owns(point) {
+                            data.castles.push(projection.point(point.0, point.1));
+                        }
+                    }
+                }
+                "poi" if lighthouse(&tags) => {
+                    for point in points(geometry) {
+                        if projection.owns(point) {
+                            data.lighthouses.push(projection.point(point.0, point.1));
+                        }
+                    }
+                }
                 "poi" => {
                     let list = match tags.text("class") {
                         class if shop(class) => &mut data.shops,
@@ -120,6 +134,60 @@ fn public(class: &str, subclass: &str) -> bool {
         "post" => subclass == "post_office",
         _ => false,
     }
+}
+
+/// Whether a point of interest is a castle: `OpenMapTiles` puts `historic=castle` and
+/// `historic=ruins` in class `castle`; ruins (mostly a few walls) are left out.
+fn castle(class: &str, subclass: &str) -> bool {
+    class == "castle" && subclass == "castle"
+}
+
+/// Words in names that make a point a lighthouse wherever they appear, also inside compounds
+/// ("Leuchtturm Westerheversand", "Hornbæk Fyrtårn", "観音埼灯台").
+const LIGHTHOUSE_PARTS: [&str; 12] = [
+    "lighthouse",
+    "leuchtturm",
+    "leuchtfeuer",
+    "vuurtoren",
+    "fyrtårn",
+    "fyrtorn",
+    "灯台",
+    "燈台",
+    "灯塔",
+    "燈塔",
+    "등대",
+    "φάρος",
+];
+/// Words that make a point a lighthouse only standing alone ("Faro de Cabo Mayor", "Phare
+/// du Créac'h"), since they are also parts of other words.
+const LIGHTHOUSE_WORDS: [&str; 8] = [
+    "phare", "faro", "farol", "fyr", "majak", "маяк", "fener", "latarnia",
+];
+
+/// Whether a point of interest is a lighthouse. `OpenMapTiles` has no class for
+/// `man_made=lighthouse`; lighthouses show up as attractions (`tourism=attraction`) or museums
+/// named as lighthouses, so the name decides. A `lighthouse` subclass, should the schema gain
+/// one, counts too. Bus stops and information boards named after a lighthouse do not.
+fn lighthouse(tags: &Tags) -> bool {
+    if tags.text("subclass") == "lighthouse" {
+        return true;
+    }
+    if !matches!(tags.text("class"), "attraction" | "museum") {
+        return false;
+    }
+    tags.0.iter().any(|(key, value)| match value {
+        Value::String(name) if key.starts_with("name") => lighthouse_name(name),
+        _ => false,
+    })
+}
+
+/// Whether a name says its feature is a lighthouse.
+fn lighthouse_name(name: &str) -> bool {
+    let name = name.to_lowercase();
+    LIGHTHOUSE_PARTS.iter().any(|part| name.contains(part))
+        || name
+            .split(|c: char| !c.is_alphanumeric())
+            .any(|word| LIGHTHOUSE_WORDS.contains(&word))
 }
 
 /// Feature properties.
@@ -528,6 +596,43 @@ mod tests {
         // Clinics and post boxes are not.
         assert!(!public("hospital", "clinic") && !public("post", "post_box"));
         assert!(!public("office", "company"));
+    }
+
+    #[test]
+    fn castles_and_lighthouses_are_found_among_the_points_of_interest() {
+        assert!(castle("castle", "castle"));
+        // Ruins are mostly a few walls; forts and the rest are no castle class at all.
+        assert!(!castle("castle", "ruins") && !castle("attraction", "castle"));
+
+        let poi = |class: &str, name_key: &str, name: &str| {
+            Tags(HashMap::from([
+                ("class".to_owned(), Value::String(class.to_owned())),
+                ("subclass".to_owned(), Value::String(class.to_owned())),
+                (name_key.to_owned(), Value::String(name.to_owned())),
+            ]))
+        };
+        // As OpenFreeMap has them: attractions named as lighthouses, in any language.
+        for (key, name) in [
+            ("name", "Leuchtturm Westerheversand"),
+            ("name_en", "Dornbusch Lighthouse"),
+            ("name", "Faro de Cabo Mayor"),
+            ("name", "Phare du Créac'h"),
+            ("name", "観音埼灯台"),
+            ("name:da", "Hornbæk Fyrtårn"),
+        ] {
+            assert!(lighthouse(&poi("attraction", key, name)), "{name}");
+        }
+        // Not other attractions, nor bus stops or boards named after a lighthouse, nor words
+        // that merely contain one of the short words.
+        assert!(!lighthouse(&poi("attraction", "name", "Schloss Thun")));
+        assert!(!lighthouse(&poi("bus", "name", "Leuchtturm")));
+        assert!(!lighthouse(&poi(
+            "information",
+            "name",
+            "Leuchtturm Dornbusch"
+        )));
+        assert!(!lighthouse(&poi("attraction", "name", "Pharmacy Garden")));
+        assert!(!lighthouse(&poi("attraction", "name", "Фыркино")));
     }
 
     #[test]

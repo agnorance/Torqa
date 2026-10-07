@@ -209,6 +209,10 @@ the realistic look's textures and patterns were replaced step by step.
   — kinds inferred from the map (places of worship, land use, size, elevation), Blender-made
   models placed where they fit (chalets facing the valley, choirs east), shells in the
   distance and for odd outlines
+- [x] Castles and lighthouses (#137): from the map's points of interest (castles by class,
+  lighthouses by name, as OpenMapTiles has no class for them), Blender-made castles (keep,
+  crenellations, corner towers) and lighthouses (banded tower, gallery, lantern), lighthouses
+  without an outline standing on their own
 - [x] Quality presets Low–Ultra in settings, frame-time budget per preset (60 fps; a lower
   preset is suggested when a ride stays below)
 - [x] Asset pipeline: Blender 5.2 LTS in an x86-64 art container (`scripts/art.sh`), scripted
