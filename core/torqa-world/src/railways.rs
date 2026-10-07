@@ -8,8 +8,6 @@
 //! (the app's rail shader) at their own height. Plants keep off the tracks
 //! (`streets::Clearance`).
 
-use std::collections::HashMap;
-
 use torqa_osm::{MapData, StructureKind};
 use torqa_routes::{ElevationModel, LocalProjection, Surface};
 
@@ -20,8 +18,6 @@ use crate::{CORRIDOR, ROAD_HALF_WIDTH, drape};
 pub(crate) const BED_M: f64 = 3.2;
 /// Points of a line this far apart.
 const STEP_M: f64 = 5.0;
-/// Ends of pieces this close are joined into one line.
-const JOIN_M: f64 = 0.5;
 /// The terrain is smoothed over this far either side of each point...
 const SMOOTHING_M: f64 = 80.0;
 /// ...and the line held to this grade (rise per metre), funiculars excepted.
@@ -109,8 +105,8 @@ pub(crate) async fn network<M: ElevationModel>(
 }
 
 /// The railways near the route joined into continuous lines where their pieces meet end to end
-/// (not at switches, where three meet): each line as its pieces with what carries them, and
-/// whether it is a funicular.
+/// (not at switches, where three meet; `chains`): each line as its pieces with what carries
+/// them, and whether it is a funicular.
 fn chains(
     map: &MapData,
     projection: &LocalProjection,
@@ -139,57 +135,27 @@ fn chains(
                     .any(|&(e, n)| road.nearest(e, n, CORRIDOR).is_some())
         })
         .collect();
-    #[allow(clippy::cast_possible_truncation)] // local metres stay far below 2^63
-    let key = |(e, n): (f64, f64)| ((e / JOIN_M).round() as i64, (n / JOIN_M).round() as i64);
-    // Which pieces end at each place.
-    let mut ends: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
-    for (index, ((line, _), _)) in pieces.iter().enumerate() {
-        for end in [line[0], line[line.len() - 1]] {
-            ends.entry(key(end)).or_default().push(index);
-        }
-    }
-    let mut used = vec![false; pieces.len()];
-    let mut chains = Vec::new();
-    for start in 0..pieces.len() {
-        if used[start] {
-            continue;
-        }
-        used[start] = true;
-        let mut funicular = pieces[start].1;
-        let mut chain: Vec<Piece> = vec![pieces[start].0.clone()];
-        // Grow the line at its end, then at its start, as long as exactly two pieces meet.
-        for forward in [true, false] {
-            loop {
-                let at = if forward {
-                    let line = &chain[chain.len() - 1].0;
-                    line[line.len() - 1]
-                } else {
-                    chain[0].0[0]
-                };
-                let here = &ends[&key(at)];
-                if here.len() != 2 {
-                    break;
-                }
-                let Some(other) = here.iter().copied().find(|&o| !used[o]) else {
-                    break;
-                };
-                used[other] = true;
-                let ((mut line, surface), steep) = pieces[other].clone();
-                funicular |= steep;
-                // Oriented to run on from `at`.
-                if (key(line[0]) == key(at)) != forward {
-                    line.reverse();
-                }
-                if forward {
-                    chain.push((line, surface));
-                } else {
-                    chain.insert(0, (line, surface));
-                }
-            }
-        }
-        chains.push((chain, funicular));
-    }
-    chains
+    let lines: Vec<&[(f64, f64)]> = pieces
+        .iter()
+        .map(|((line, _), _)| line.as_slice())
+        .collect();
+    crate::chains::chains(&lines, &|_, _| true)
+        .into_iter()
+        .map(|chain| {
+            let funicular = chain.iter().any(|&(piece, _)| pieces[piece].1);
+            let joined: Vec<Piece> = chain
+                .iter()
+                .map(|&(piece, reversed)| {
+                    let (mut line, surface) = pieces[piece].0.clone();
+                    if reversed {
+                        line.reverse();
+                    }
+                    (line, surface)
+                })
+                .collect();
+            (joined, funicular)
+        })
+        .collect()
 }
 
 /// A railway's centre line: heights from the terrain, smoothed and held to its grades, bridges

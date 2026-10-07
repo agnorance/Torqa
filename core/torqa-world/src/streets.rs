@@ -7,13 +7,12 @@
 use torqa_osm::{MapData, RoadClass, StructureKind};
 use torqa_routes::{ElevationModel, LocalProjection};
 
-use crate::drape;
 use crate::junctions::{self, Corner};
 use crate::railways::{self, Railway};
 use crate::road::{Mouth, RoadIndex};
 use crate::structures::Below;
 use crate::water::{self, Pool};
-use crate::{HeightGrid, MeshData, On, ROAD_HALF_WIDTH};
+use crate::{HeightGrid, MeshData, On, ROAD_HALF_WIDTH, chains, drape};
 
 /// Distance between the points of a street: short enough to tell where it runs along the road
 /// ridden and to keep plants off it.
@@ -100,31 +99,58 @@ fn paved(class: RoadClass) -> bool {
     )
 }
 
-/// The map's streets around the route, densified, with bridge decks' end heights from `model`.
-/// Tunnels are left out: draped on the ground, they would run over the mountain.
+/// The map's streets around the route, their pieces joined end to end where they go on as one
+/// way of a kind (`chains`), densified, with bridge decks' end heights from `model`: a bridge
+/// cut by a tile border is one deck between its real ends, not two dipping to the ground where
+/// the tiles cut them, crossing each other (#116, #117). Tunnels are left out: draped on the
+/// ground, they would run over the mountain.
 pub(crate) async fn lines<M: ElevationModel>(
     map: &MapData,
     projection: &LocalProjection,
     model: &mut M,
 ) -> Vec<Street> {
+    let projected: Vec<Vec<(f64, f64)>> = map
+        .roads
+        .iter()
+        .map(|road| {
+            road.line
+                .iter()
+                .map(|&(lat, lon)| projection.project(lat, lon))
+                .collect()
+        })
+        .collect();
+    let pieces: Vec<&[(f64, f64)]> = projected.iter().map(Vec::as_slice).collect();
+    let alike = |first: usize, second: usize| {
+        let (first, second) = (&map.roads[first], &map.roads[second]);
+        first.class == second.class && first.structure == second.structure
+    };
+    let joined = chains::chains(&pieces, &alike);
     let mut streets = Vec::new();
-    for (index, road) in map.roads.iter().enumerate() {
+    for (index, chain) in joined.into_iter().enumerate() {
+        let road = &map.roads[chain[0].0];
         if road.structure == Some(StructureKind::Tunnel) {
             continue;
         }
-        let line: Vec<(f64, f64)> = road
-            .line
-            .iter()
-            .map(|&(lat, lon)| projection.project(lat, lon))
-            .collect();
+        let mut line: Vec<(f64, f64)> = Vec::new();
+        for &(piece, reversed) in &chain {
+            let mut points = projected[piece].clone();
+            if reversed {
+                points.reverse();
+            }
+            // Joined pieces share their end points.
+            let skip = usize::from(!line.is_empty());
+            line.extend(points.into_iter().skip(skip));
+        }
         let points = drape::densify(&line, STEP_M);
-        let Some(&first) = points.first() else {
+        let (Some(&first), Some(&last)) = (line.first(), line.last()) else {
             continue;
         };
         let deck = if road.structure == Some(StructureKind::Bridge) {
-            let mut end = async |(lat, lon): (f64, f64)| model.elevation(lat, lon).await.ok();
-            let (start, finish) = (road.line[0], road.line[road.line.len() - 1]);
-            match (end(start).await, end(finish).await) {
+            let mut end = async |(east, north): (f64, f64)| {
+                let (lat, lon) = projection.unproject(east, north);
+                model.elevation(lat, lon).await.ok()
+            };
+            match (end(first).await, end(last).await) {
                 (Some(a), Some(b)) => Some((a, b)),
                 // Without the ground's heights a deck cannot be placed.
                 _ => continue,

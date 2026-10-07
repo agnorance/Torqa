@@ -2458,6 +2458,91 @@ async fn bridges_of_other_streets_stand_on_piers() {
 }
 
 #[tokio::test]
+async fn a_bridge_cut_by_a_tile_border_is_one_deck_between_its_ends() {
+    use torqa_osm::{Road, RoadClass};
+
+    // #116, #117: a street bridge over a valley 20 m deep, cut in the middle by a tile border
+    // as the map tiles have it (the two pieces' ends a few decimetres apart). Each piece got a
+    // deck down to the valley floor at the cut.
+    struct Ravine;
+    impl ElevationModel for Ravine {
+        fn elevation(
+            &mut self,
+            _lat: f64,
+            lon: f64,
+        ) -> impl std::future::Future<Output = Result<f64, String>> + Send {
+            let east = (lon - 7.0) * METERS_PER_DEGREE * 46f64.to_radians().cos();
+            std::future::ready(Ok(if (150.0..250.0).contains(&east) {
+                480.0
+            } else {
+                500.0
+            }))
+        }
+    }
+    let piece = |from: (f64, f64), to: (f64, f64)| Road {
+        class: RoadClass::Street,
+        line: vec![at(from.0, from.1), at(to.0, to.1)],
+        structure: Some(StructureKind::Bridge),
+    };
+    let route = route_north(&[]).await;
+    let map = MapData {
+        roads: vec![
+            piece((100.0, 600.0), (200.0, 600.0)),
+            // Drawn the other way round.
+            piece((300.0, 600.0), (200.0, 600.3)),
+        ],
+        ..MapData::default()
+    };
+    let world = generate(&route, &mut Ravine, &map, &mut |_, _| {}).await;
+
+    let mut deck = 0;
+    for chunk in &world.chunks {
+        for v in &chunk.streets.vertices {
+            let (x, y, z) = (v[0] + chunk.center[0], v[1], v[2] + chunk.center[2]);
+            if !(160.0..=240.0).contains(&x) || (z + 600.0).abs() > 5.0 {
+                continue;
+            }
+            // Over the valley floor only the deck at its ends' height (its top and the bottom
+            // of its sides) and the piers' feet: nothing in between.
+            assert!(!(481.0..499.0).contains(&y), "the deck dips to {y} at {x}");
+            if y > 499.9 {
+                deck += 1;
+            }
+        }
+    }
+    assert!(deck > 10, "{deck} deck vertices over the valley");
+}
+
+#[test]
+fn pieces_of_a_way_join_end_to_end_but_not_at_junctions() {
+    // #116: a way cut by tile borders, its pieces' ends a few decimetres apart where the tiles
+    // cut it, one piece drawn the other way round; at its end two others meet it.
+    let west = [(0.0, 0.0), (100.0, 0.0)];
+    let middle = [(200.0, 0.0), (100.2, 0.3)];
+    let east = [(200.0, 0.0), (300.0, 0.0)];
+    let branch = [(300.0, 0.0), (300.0, 100.0)];
+    let beyond = [(300.0, 0.0), (400.0, 0.0)];
+    let lines: Vec<&[(f64, f64)]> = [&west, &middle, &east, &branch, &beyond]
+        .into_iter()
+        .map(<[(f64, f64); 2]>::as_slice)
+        .collect();
+
+    assert_eq!(
+        crate::chains::chains(&lines, &|_, _| true),
+        vec![
+            vec![(0, false), (1, true), (2, false)],
+            vec![(3, false)],
+            vec![(4, false)],
+        ]
+    );
+    // Pieces that do not go together (another kind of way) stay apart.
+    assert_eq!(
+        crate::chains::chains(&lines[..3], &|first, second| first + second != 1),
+        vec![vec![(0, false)], vec![(2, true), (1, false)]]
+    );
+}
+
+#[tokio::test]
 async fn short_low_bridges_are_stone_arches() {
     // A 40 m bridge over a gully 8 m deep.
     struct Gully;

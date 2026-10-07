@@ -6,6 +6,7 @@
 //! Triangles wind clockwise seen from their front, Godot's front-face order.
 
 mod buildings;
+mod chains;
 mod channels;
 mod drape;
 mod horizon;
