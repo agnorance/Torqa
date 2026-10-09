@@ -60,8 +60,9 @@ The video's own **sound** plays along at the same speed, without sounding higher
 it is stretched, not sped up like a tape. It fades out when you slow to a crawl or stop.
 Switch it off under **Sound** in the ride options (course page or **Settings** while riding).
 
-Videos are decoded on the processor for now. 1080p is the target; larger videos are scaled
-down while playing, which may not keep up — hardware decoding is planned.
+Videos are decoded on the processor for now, on all its cores. 1080p is the target; larger
+videos are scaled down while playing, which may not keep up on a small machine — hardware
+decoding is planned.
 
 ## The video stays where it is
 
