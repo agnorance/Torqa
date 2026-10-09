@@ -298,7 +298,8 @@ impl Portal {
 /// tube starts there, the approach runs in a cutting up to the portal and the hill over the
 /// tunnel stays as it is. A tunnel of the road ridden that the ground never covers (a gallery,
 /// or a cliff the terrain data misses) keeps its mapped ends as portals, and the ground is
-/// heaped over it; a railway's stays as mapped, without portals.
+/// heaped over it; a railway's stays as mapped, without portals, as does one the map does not
+/// have (#155).
 pub(crate) async fn open_portals<M: ElevationModel>(
     road: &mut RoadIndex,
     rails: &mut RoadIndex,
@@ -307,8 +308,6 @@ pub(crate) async fn open_portals<M: ElevationModel>(
     model: &mut M,
 ) -> Vec<Portal> {
     let (road_runs, rail_runs) = (road.tunnels(), rails.tunnels());
-    // The hill over a tunnel is looked at with the cuttings leading to it ending where it is
-    // mapped to begin, not rounding off into the hill.
     for run in &road_runs {
         road.set_portals(run, Some((0, 0)));
     }
@@ -336,6 +335,7 @@ pub(crate) async fn open_portals<M: ElevationModel>(
             rail_openings.push(open_ends(run, tube(true), &shapers, projection, model).await);
         }
     }
+    share_openings(&rail_runs, &mut rail_openings);
     let mut portals = Vec::new();
     for (index, runs, openings, railway) in [
         (road, &road_runs, road_openings, false),
@@ -355,6 +355,40 @@ pub(crate) async fn open_portals<M: ElevationModel>(
         }
     }
     portals
+}
+
+/// Gives tunnel runs lying side by side, their ends within `railways::PARALLEL_M` of each
+/// other, the same openings, the latest of theirs at either end: parallel tracks share one
+/// tunnel (#99), and the stretch one of them opened onto the ground beside the other's tube
+/// would bare it. A run too short for the shared opening keeps its own.
+fn share_openings(runs: &[TunnelRun], openings: &mut [Option<(usize, usize)>]) {
+    let ends = |run: &TunnelRun| {
+        (
+            run.points[0].position,
+            run.points[run.points.len() - 1].position,
+        )
+    };
+    let near = |a: (f64, f64), b: (f64, f64)| distance(a, b) <= railways::PARALLEL_M;
+    for i in 0..runs.len() {
+        let Some((mut start, mut end)) = openings[i] else {
+            continue;
+        };
+        let (a0, a1) = ends(&runs[i]);
+        for (j, other) in runs.iter().enumerate() {
+            let (b0, b1) = ends(other);
+            if j != i
+                && near(a0, b0)
+                && near(a1, b1)
+                && let Some((s, e)) = openings[j]
+            {
+                start = start.max(s);
+                end = end.max(e);
+            }
+        }
+        if start + end + 2 < runs[i].points.len() {
+            openings[i] = Some((start, end));
+        }
+    }
 }
 
 /// How many segments at either end of a tunnel `run` lie before the ground rises over its
