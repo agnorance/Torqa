@@ -33,6 +33,11 @@ pub struct VideoSource {
     /// the end of the route; the video follows the distance evenly between neighbours. Empty
     /// when timestamps pair them.
     pub marks: Vec<SyncMark>,
+    /// For a video with a record of its own pace (a Tacx RLV added to a GPX course): the
+    /// distance as that record counts it, and the moment of the video there, at each change of
+    /// speed. Between the marks the video follows this pace rather than going evenly. Empty
+    /// for other videos.
+    pub pace: Vec<SyncMark>,
     /// Whether the GPX is a real place; `false` for a Tacx RLV course drawn from its slopes.
     pub located: bool,
 }
@@ -53,8 +58,41 @@ pub struct SyncMark {
 /// # Errors
 /// A readable message if a file is missing or cannot be read.
 fn tacx_source(path: &Path) -> Result<VideoSource, String> {
-    let unreadable =
-        |file: &Path, e: &dyn std::fmt::Display| format!("cannot read {}: {e}", file.display());
+    let (video, marks) = rlv_pace(path)?;
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let pgmf_name = format!("{stem}.pgmf");
+    let pgmf_path =
+        find_file(dir, |name| name.eq_ignore_ascii_case(&pgmf_name)).ok_or_else(|| {
+            format!("{pgmf_name} not found — it holds the course's slopes, put it next to the RLV")
+        })?;
+    let pgmf_bytes = std::fs::read(&pgmf_path).map_err(|e| unreadable(&pgmf_path, &e))?;
+    let pgmf = tacx::parse_pgmf(&pgmf_bytes).map_err(|e| unreadable(&pgmf_path, &e))?;
+    let name = tacx_name(&pgmf, &stem);
+    Ok(VideoSource {
+        video,
+        gpx: tacx::gpx_from_profile(&name, &pgmf),
+        name,
+        offset: Duration::ZERO,
+        marks,
+        pace: Vec::new(),
+        located: false,
+    })
+}
+
+fn unreadable(file: &Path, e: &dyn std::fmt::Display) -> String {
+    format!("cannot read {}: {e}", file.display())
+}
+
+/// The video of the Tacx `.rlv` at `path`, found next to it, and its pace: the distance the
+/// camera has moved and the moment of the video, at each change of speed.
+///
+/// # Errors
+/// A readable message if the RLV or its video is missing or cannot be read.
+fn rlv_pace(path: &Path) -> Result<(PathBuf, Vec<SyncMark>), String> {
     let bytes = std::fs::read(path).map_err(|e| unreadable(path, &e))?;
     let rlv = tacx::parse_rlv(&bytes).map_err(|e| unreadable(path, &e))?;
     let dir = path.parent().unwrap_or(Path::new("."));
@@ -81,37 +119,83 @@ fn tacx_source(path: &Path) -> Result<VideoSource, String> {
                 path.display()
             )
         })?;
-    let pgmf_name = format!("{stem}.pgmf");
-    let pgmf_path =
-        find_file(dir, |name| name.eq_ignore_ascii_case(&pgmf_name)).ok_or_else(|| {
-            format!("{pgmf_name} not found — it holds the course's slopes, put it next to the RLV")
-        })?;
-    let pgmf_bytes = std::fs::read(&pgmf_path).map_err(|e| unreadable(&pgmf_path, &e))?;
-    let pgmf = tacx::parse_pgmf(&pgmf_bytes).map_err(|e| unreadable(&pgmf_path, &e))?;
     let duration = Video::open(&video)
         .map_err(|e| unreadable(&video, &e))?
         .info()
         .duration;
     // The RLV's end may lie a few frames past the video's; the video ends where it ends.
-    let mut marks: Vec<SyncMark> = Vec::new();
+    let mut pace: Vec<SyncMark> = Vec::new();
     for (distance, time) in rlv.sync_points() {
         let time = time.min(duration);
-        if marks.last().is_none_or(|m| time > m.time) {
-            marks.push(SyncMark {
+        if pace.last().is_none_or(|m| time > m.time) {
+            pace.push(SyncMark {
                 distance: Meters(distance),
                 time,
             });
         }
     }
-    let name = tacx_name(&pgmf, &stem);
-    Ok(VideoSource {
-        video,
-        gpx: tacx::gpx_from_profile(&name, &pgmf),
-        name,
-        offset: Duration::ZERO,
-        marks,
-        located: false,
-    })
+    Ok((video, pace))
+}
+
+/// The video to add to a GPX course from the file chosen, and its pace (see
+/// [`VideoSource::pace`]): for a Tacx `.rlv`, the video next to it, ridden by the RLV's
+/// speeds; any other file is the video itself, without a pace.
+///
+/// # Errors
+/// A readable message if an RLV or its video is missing or cannot be read.
+pub fn paced_video(path: &Path) -> Result<(PathBuf, Vec<SyncMark>), String> {
+    if is_rlv(path) {
+        rlv_pace(path)
+    } else {
+        Ok((path.to_owned(), Vec::new()))
+    }
+}
+
+fn is_rlv(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("rlv"))
+}
+
+/// `(route distance m, video s)` for each mark, with the moments of `pace` in between: the
+/// video follows the pace from one mark to the next, stretched to the route's distance there.
+/// Evenly between marks where the pace does not move.
+fn paced_trace(marks: &[SyncMark], pace: &[SyncMark]) -> Vec<(f64, f64)> {
+    let along = |time: Duration| -> f64 {
+        let after = pace.partition_point(|p| p.time <= time);
+        match (after.checked_sub(1).map(|i| pace[i]), pace.get(after)) {
+            (Some(a), Some(b)) => {
+                let f = time.saturating_sub(a.time).as_secs_f64()
+                    / b.time.saturating_sub(a.time).as_secs_f64();
+                a.distance.0 + (b.distance.0 - a.distance.0) * f
+            }
+            (Some(a), None) => a.distance.0,
+            (None, Some(b)) => b.distance.0,
+            (None, None) => 0.0,
+        }
+    };
+    let mut trace = Vec::new();
+    for pair in marks.windows(2) {
+        let (from, to) = (pair[0], pair[1]);
+        trace.push((from.distance.0, from.time.as_secs_f64()));
+        let (start, end) = (along(from.time), along(to.time));
+        if end <= start {
+            continue;
+        }
+        let scale = (to.distance.0 - from.distance.0) / (end - start);
+        for p in pace
+            .iter()
+            .filter(|p| p.time > from.time && p.time < to.time)
+        {
+            trace.push((
+                from.distance.0 + (p.distance.0 - start) * scale,
+                p.time.as_secs_f64(),
+            ));
+        }
+    }
+    if let Some(last) = marks.last() {
+        trace.push((last.distance.0, last.time.as_secs_f64()));
+    }
+    trace
 }
 
 /// The name of a Tacx course: its PGMF's, unless missing or cut short by the field's size,
@@ -155,26 +239,41 @@ fn find_file(dir: &Path, matches: impl Fn(&str) -> bool) -> Option<PathBuf> {
 
 /// What the import needs to know about a video first: its length, and whether it carries GPS
 /// (then it pairs itself with its route) or must be placed on a GPX by hand.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Probe {
+    /// The video itself: the file looked at, or the video of a Tacx `.rlv`.
+    pub video: PathBuf,
     /// The video's length.
     pub duration: Duration,
     /// Whether it records GPS.
     pub has_gps: bool,
+    /// Where the ride starts and ends in the video, as far as known: the whole video, or
+    /// the stretch a Tacx RLV's pace covers.
+    pub span: (Duration, Duration),
 }
 
-/// Looks at a video before importing it.
+/// Looks at a video, or the video of a Tacx `.rlv`, before importing it or adding it to a
+/// course.
 ///
 /// # Errors
 /// A readable message if it cannot be opened as a video.
 pub fn probe(path: &Path) -> Result<Probe, String> {
-    let unreadable = |e: &dyn std::fmt::Display| format!("cannot read {}: {e}", path.display());
-    let duration = Video::open(path)
-        .map_err(|e| unreadable(&e))?
+    let (video, pace) = paced_video(path)?;
+    let duration = Video::open(&video)
+        .map_err(|e| unreadable(&video, &e))?
         .info()
         .duration;
-    let has_gps = torqa_video::has_gps(path).map_err(|e| unreadable(&e))?;
-    Ok(Probe { duration, has_gps })
+    let has_gps = torqa_video::has_gps(&video).map_err(|e| unreadable(&video, &e))?;
+    let span = match (pace.first(), pace.last()) {
+        (Some(first), Some(last)) if last.time > first.time => (first.time, last.time),
+        _ => (Duration::ZERO, duration),
+    };
+    Ok(Probe {
+        video,
+        duration,
+        has_gps,
+        span,
+    })
 }
 
 /// Reads what a video course needs from an Incyclist control file (`.xml`) or a video with
@@ -204,6 +303,7 @@ pub fn source(path: &Path) -> Result<VideoSource, String> {
             gpx,
             offset: route.video_offset(),
             marks: Vec::new(),
+            pace: Vec::new(),
             located: true,
         });
     }
@@ -223,6 +323,7 @@ pub fn source(path: &Path) -> Result<VideoSource, String> {
         name,
         offset: Duration::ZERO,
         marks: Vec::new(),
+        pace: Vec::new(),
         located: true,
     })
 }
@@ -237,6 +338,9 @@ pub struct VideoCourse {
     /// The marks of a video aligned by hand, from the route's start to its end; empty
     /// otherwise.
     pub marks: Vec<SyncMark>,
+    /// The video's own pace between the marks (see [`VideoSource::pace`]); empty when it goes
+    /// evenly.
+    pub pace: Vec<SyncMark>,
     /// Whether the route is a real place (see [`VideoSource::located`]).
     pub located: bool,
     /// The video's length.
@@ -281,8 +385,9 @@ pub fn fit_marks(
 
 impl VideoCourse {
     /// Pairs `route` (imported from `source.gpx`) with the video: by the GPX timestamps, or
-    /// by the marks of a video aligned by hand, evenly in between. Without either, the video
-    /// is spread evenly from its offset to its end.
+    /// by the marks of a video aligned by hand, in between at the video's own pace if it has
+    /// one, else evenly. Without either, the video is spread evenly from its offset to its
+    /// end.
     ///
     /// # Errors
     /// A readable message if the video cannot be opened or the marks do not fit it.
@@ -307,11 +412,12 @@ impl VideoCourse {
                     Ghost::from_trace("video", [(0.0, 0.0), (route.length().0, span)].into_iter())
                 })
         } else {
+            let start = offset.as_secs_f64();
             Ghost::from_trace(
                 "video",
-                marks
-                    .iter()
-                    .map(|m| (m.distance.0, m.time.saturating_sub(offset).as_secs_f64())),
+                paced_trace(&marks, &source.pace)
+                    .into_iter()
+                    .map(|(distance, time)| (distance, (time - start).max(0.0))),
             )
         }
         .ok_or_else(|| "the video and the route do not match".to_owned())?;
@@ -319,6 +425,7 @@ impl VideoCourse {
             video: source.video.clone(),
             offset,
             marks,
+            pace: source.pace.clone(),
             located: source.located,
             duration,
             sync,
@@ -682,5 +789,52 @@ impl std::fmt::Debug for SoundPlayer {
         f.debug_struct("SoundPlayer")
             .field("rate", &self.rate)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn marks(pairs: &[(f64, f64)]) -> Vec<SyncMark> {
+        pairs
+            .iter()
+            .map(|&(d, t)| SyncMark {
+                distance: Meters(d),
+                time: Duration::from_secs_f64(t),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn between_marks_a_video_follows_its_own_pace_stretched_to_the_route() {
+        // The camera covers 20 m in the first 2 s, then only 10 m in the next 2 s (a climb).
+        let pace = marks(&[(0.0, 0.0), (20.0, 2.0), (30.0, 4.0)]);
+        // The route is 60 m long: twice the RLV's distance.
+        let trace = paced_trace(&marks(&[(0.0, 0.0), (60.0, 4.0)]), &pace);
+        assert_eq!(trace, [(0.0, 0.0), (40.0, 2.0), (60.0, 4.0)]);
+
+        // A mark in between, off from where the pace would put it: each stretch is fitted
+        // to its own marks. The pace's 20 m lies between 1 s (10 m) and 3 s (25 m).
+        let trace = paced_trace(&marks(&[(0.0, 1.0), (30.0, 3.0), (40.0, 4.0)]), &pace);
+        assert_eq!(trace.len(), 4);
+        assert_eq!(trace[0], (0.0, 1.0));
+        assert!((trace[1].0 - 20.0).abs() < 1e-9 && (trace[1].1 - 2.0).abs() < 1e-9);
+        assert_eq!(&trace[2..], [(30.0, 3.0), (40.0, 4.0)]);
+    }
+
+    #[test]
+    fn without_a_pace_the_video_goes_evenly_from_mark_to_mark() {
+        let given = marks(&[(0.0, 0.5), (10.0, 2.5), (40.0, 3.5)]);
+        assert_eq!(
+            paced_trace(&given, &[]),
+            [(0.0, 0.5), (10.0, 2.5), (40.0, 3.5)]
+        );
+        // Where the pace stands still (the camera stopped), evenly too.
+        let still = marks(&[(0.0, 0.0), (5.0, 1.0), (5.0, 3.0), (10.0, 4.0)]);
+        assert_eq!(
+            paced_trace(&marks(&[(0.0, 1.5), (20.0, 2.5)]), &still),
+            [(0.0, 1.5), (20.0, 2.5)]
+        );
     }
 }

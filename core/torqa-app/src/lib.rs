@@ -636,6 +636,7 @@ impl App {
                     gpx: unpacked.gpx.clone(),
                     offset: Duration::from_secs_f64(reference.offset_s.max(0.0)),
                     marks: video_marks(reference),
+                    pace: video_pace(reference),
                     located: reference.located,
                 });
             }
@@ -720,6 +721,10 @@ impl App {
     /// its end; the video follows the rider's distance evenly between neighbouring marks. The course becomes a video course; its file refers
     /// to the video.
     ///
+    /// `video` may be a Tacx `.rlv` instead: its video is added, and between the marks it
+    /// follows the RLV's record of the camera's speed rather than going evenly, so a place
+    /// downloaded as a GPX is ridden along a Real Life Video.
+    ///
     /// # Errors
     /// [`AppError::Video`] if no course is loaded, it has a video already, or the video does
     /// not fit the marks; [`AppError::Storage`] if the course file cannot be updated.
@@ -734,12 +739,14 @@ impl App {
                 "this course has a video already".to_owned(),
             ));
         }
+        let (video, pace) = video::paced_video(video).map_err(AppError::Video)?;
         let source = video::VideoSource {
-            video: video.to_owned(),
+            video,
             name: name.clone(),
             gpx: gpx.clone(),
             offset: Duration::ZERO,
             marks: marks.to_vec(),
+            pace,
             located: true,
         };
         let added = video::VideoCourse::new(route, &source).map_err(AppError::Video)?;
@@ -824,6 +831,7 @@ impl App {
             gpx: gpx.clone(),
             offset: Duration::ZERO,
             marks: marks.to_vec(),
+            pace: current.pace.clone(),
             located: current.located,
         };
         let aligned = video::VideoCourse::new(route, &source).map_err(AppError::Video)?;
@@ -2508,8 +2516,29 @@ fn video_reference(video: &video::VideoCourse, route: &Route) -> course::VideoRe
             .iter()
             .map(|m| [route.recorded_distance(m.distance).0, m.time.as_secs_f64()])
             .collect(),
+        pace: video
+            .pace
+            .iter()
+            .map(|m| [m.distance.0, m.time.as_secs_f64()])
+            .collect(),
         located: video.located,
     }
+}
+
+/// The pace of a video course's video from its file (see [`video::VideoSource::pace`]).
+fn video_pace(reference: &course::VideoReference) -> Vec<SyncMark> {
+    let mut pace: Vec<SyncMark> = Vec::new();
+    for &[d, t] in &reference.pace {
+        let time = Duration::try_from_secs_f64(t.max(0.0)).unwrap_or_default();
+        // The pace is read by time; a damaged file must not send it back.
+        if pace.last().is_none_or(|m| time > m.time) {
+            pace.push(SyncMark {
+                distance: Meters(d),
+                time,
+            });
+        }
+    }
+    pace
 }
 
 /// The marks of a video course from its file, older files with a start and end only included.
@@ -3627,6 +3656,66 @@ mod tests {
         assert!(course::read_manifest(file).unwrap().video.is_none());
         assert!(!app.build_world());
         run_until(&mut app, |e| matches!(e, AppEvent::WorldReady { .. }));
+    }
+
+    #[test]
+    fn a_tacx_real_life_video_added_to_a_gpx_course_follows_the_rlvs_speeds() {
+        use torqa_video::testing::{rlv_bytes, test_video};
+
+        let dir = temp_dir("rlv-gpx");
+        video_in(&dir, &test_video("rlv-gpx", 64, 48), "stelvio.mp4");
+        let rlv = dir.join("Stelvio.rlv");
+        std::fs::write(&rlv, rlv_bytes(r"C:\Tacx\Videos\STELVIO.MP4")).unwrap();
+        // The RLV is looked at for its video, which the alignment shows.
+        let probe = video::probe(&rlv).unwrap();
+        assert_eq!(probe.video, dir.join("stelvio.mp4"));
+        assert_eq!(probe.span.0, Duration::ZERO);
+        assert!((probe.span.1.as_secs_f64() - 4.0).abs() < 0.15);
+
+        let mut app = App::new(dir.join("a/data"), dir.join("a/cache")).unwrap();
+        app.load_route(write_timed_route(&dir), true);
+        let events = run_until(&mut app, |e| matches!(e, AppEvent::CourseAdded(_)));
+        let Some(AppEvent::CourseAdded(file)) = events.last() else {
+            unreachable!()
+        };
+        app.open_course(file.clone());
+        run_until(&mut app, |e| matches!(e, AppEvent::RouteLoaded(_)));
+
+        // From 1 s to 3 s of the video: the RLV's camera moves 10 m in the first second of
+        // that, at 1 m a frame, and 5 m in the second, at 0.5 m — two thirds of the route
+        // are behind the rider at 2 s, not half as when the video went evenly.
+        app.add_video(&rlv, &marks(&[(0.0, 1.0), (0.0, 3.0)]))
+            .unwrap();
+        let length = app.route().unwrap().length().0;
+        let at = |app: &App, m: f64| app.video().unwrap().time_at(Meters(m)).as_secs_f64();
+        let check = |app: &App| {
+            assert!((at(app, 0.0) - 1.0).abs() < 0.01);
+            assert!(
+                (at(app, length / 3.0) - 1.5).abs() < 0.05,
+                "{}",
+                at(app, length / 3.0)
+            );
+            assert!((at(app, length * 2.0 / 3.0) - 2.0).abs() < 0.05);
+            assert!((at(app, length) - 3.0).abs() < 0.01);
+        };
+        check(&app);
+        let course = app.video().unwrap();
+        assert_eq!(course.video, dir.join("stelvio.mp4"));
+        // A real place: ridden along the video or in 3D, and the video can be taken off.
+        assert!(course.located);
+        assert!(course.aligned_by_hand());
+
+        // Moving the marks keeps the RLV's speeds in between.
+        app.align_video(&marks(&[(0.0, 1.0), (length, 3.0)]))
+            .unwrap();
+        check(&app);
+
+        // The course file holds the pace: it rides the same without the RLV.
+        std::fs::remove_file(&rlv).unwrap();
+        let mut other = App::new(dir.join("b/data"), dir.join("b/cache")).unwrap();
+        other.open_course(file.clone());
+        run_until(&mut other, |e| matches!(e, AppEvent::RouteLoaded(_)));
+        check(&other);
     }
 
     #[test]

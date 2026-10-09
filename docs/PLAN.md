@@ -147,6 +147,11 @@ Built in rideable steps:
   removed from any course
 - [x] Tacx RLV import (`.rlv` + `.pgmf` + video, #42): ridden along the video by distance
   and slope, no 3D
+- [x] Tacx RLVs on a GPX course ("Add video…" takes the `.rlv`): placed by sync points, the
+  RLV's speeds in between; map, 3D world and terrain slopes from the GPX
+- [ ] Start and end of an RLV on a GPX found from the PGMF's slopes; PGMF slopes on the trainer
+  as an option
+- [ ] Tacx `.tts` courses (e.g. the replacements for old RLVs on lunicus.org)
 - [x] Original video sound (R26): pitch-keeping time stretch (WSOLA) at the rider's speed,
   fades out when slow, switchable per ride
 - [x] Ride options that apply to video courses only (no camera, time of day, weather)

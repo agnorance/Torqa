@@ -110,6 +110,11 @@ pub struct VideoReference {
     /// those two.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub marks: Vec<[f64; 2]>,
+    /// The video's own pace between the marks, `[distance m, video s]` at each change of speed
+    /// as a Tacx RLV records it, kept here so the course rides without the `.rlv`; empty for
+    /// videos that go evenly from mark to mark.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pace: Vec<[f64; 2]>,
     /// Whether the route is a real place; `false` for courses known only by distance and
     /// slope (Tacx RLV), which are ridden along their video only.
     #[serde(default = "yes", skip_serializing_if = "is_yes")]
@@ -459,6 +464,7 @@ mod tests {
             offset_s: 0.0,
             end_s: None,
             marks: Vec::new(),
+            pace: Vec::new(),
             located: true,
         };
 

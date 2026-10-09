@@ -228,16 +228,24 @@ impl TorqaApp {
         }
     }
 
-    /// A video about to be imported: `{duration_s, has_gps}`; empty (and `failed`) if it
+    /// A video about to be imported, or a Tacx `.rlv` about to be added to a course:
+    /// `{video, duration_s, has_gps, start_s, end_s}`, `video` the video file itself and
+    /// `start_s`/`end_s` where the ride lies in it as far as known; empty (and `failed`) if it
     /// cannot be read. Without GPS it is added to a GPX course with `add_video`.
     #[func]
     #[allow(clippy::needless_pass_by_value)] // #[func] parameters are passed by value from Godot
     fn video_probe(&mut self, path: GString) -> VarDictionary {
         match torqa_app::video::probe(&PathBuf::from(path.to_string())) {
-            Ok(probe) => vdict! {
-                "duration_s" => probe.duration.as_secs_f64(),
-                "has_gps" => probe.has_gps,
-            },
+            Ok(probe) => {
+                let video = probe.video.display().to_string();
+                vdict! {
+                    "video" => video.as_str(),
+                    "duration_s" => probe.duration.as_secs_f64(),
+                    "has_gps" => probe.has_gps,
+                    "start_s" => probe.span.0.as_secs_f64(),
+                    "end_s" => probe.span.1.as_secs_f64(),
+                }
+            }
             Err(message) => {
                 self.signals()
                     .failed()

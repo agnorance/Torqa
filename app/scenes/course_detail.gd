@@ -200,8 +200,9 @@ func _init() -> void:
 	_video_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
 	_video_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	var videos: PackedStringArray = PackedStringArray()
+	# A Tacx RLV brings its video and the camera's speeds along it.
 	for extension: String in TorqaApp.video_extensions():
-		if not extension in ["xml", "rlv"]:
+		if extension != "xml":
 			videos.append("*." + extension)
 	_video_dialog.filters = PackedStringArray([", ".join(videos) + " ; " + tr("Videos")])
 	_video_dialog.use_native_dialog = true
@@ -329,8 +330,12 @@ func _on_video_chosen(path: String) -> void:
 	if probe.is_empty():
 		return
 	_adding_video = path
+	var video: String = probe["video"]
 	var duration_s: float = probe["duration_s"]
-	_edit_alignment(path, duration_s, PackedVector2Array())
+	var start_s: float = probe["start_s"]
+	var end_s: float = probe["end_s"]
+	var marks: PackedVector2Array = PackedVector2Array([Vector2(0.0, start_s), Vector2(0.0, end_s)])
+	_edit_alignment(video, duration_s, marks)
 
 
 func _open_alignment() -> void:
