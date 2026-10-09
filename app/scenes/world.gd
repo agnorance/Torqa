@@ -213,6 +213,10 @@ var _structure_material: StandardMaterial3D = StandardMaterial3D.new()
 var _grass_mesh: ArrayMesh = _plant_mesh(false)
 var _flower_mesh: ArrayMesh = _plant_mesh(true)
 var _plant_material: ShaderMaterial = ShaderMaterial.new()
+## The wind's clock for the grass and tree shaders: stands still while the ride is paused, so
+## nothing moves in the scene and the swaying grass's shadows stop flickering (#178).
+var _wind_time: float = 0.0
+var _paused: bool = false
 ## Other streets of the map (asphalt) and tracks and paths (gravel).
 var _street_material: ShaderMaterial = ShaderMaterial.new()
 var _track_material: ShaderMaterial = ShaderMaterial.new()
@@ -448,6 +452,9 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	if not _paused:
+		_wind_time += delta
+		RenderingServer.global_shader_parameter_set("wind_time", _wind_time)
 	_build_some_chunks()
 	if _rain.emitting:
 		# Round the camera, falling straight whichever way it looks.
@@ -683,6 +690,12 @@ func _follow_ride(state: Dictionary, delta: float) -> void:
 	var speed_kmh: float = state["speed_kmh"]
 	var cadence: Variant = state["cadence"]
 	var cadence_rpm: float = cadence if cadence != null else 0.0
+	# Paused, the rider waits too: the state keeps its last speed, and the trainer's cadence
+	# is live, but the bike goes nowhere (#178).
+	_paused = state["paused"]
+	if _paused:
+		speed_kmh = 0.0
+		cadence_rpm = 0.0
 	_avatar.animate(delta, cadence_rpm, speed_kmh)
 	var curvature: float = state["curvature"]
 	_lean = _leaning(_lean, TorqaApp.lean_angle(speed_kmh, curvature), delta)
