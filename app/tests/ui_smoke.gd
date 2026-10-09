@@ -553,6 +553,7 @@ func _courses_tab() -> void:
 	detail.show()
 	tabs.get_tab_bar().tab_clicked.emit(StartPage.Tab.COURSES)
 	_check(courses.visible and not detail.visible, "the Courses tab brings the gallery back")
+	main.free()
 
 
 ## Switching riders changes the avatar on the bike at once, not only with the next world.
@@ -573,7 +574,7 @@ func _rider_switch() -> void:
 	_check(avatar.rider == other, "the rider on the bike follows the rider: %s" % avatar.rider)
 	profile["avatar"] = before
 	torqa.save_profile(profile_id, profile)
-	main.queue_free()
+	main.free()
 
 
 ## The free camera turns with the mouse while Shift is held, and not without (#66).
