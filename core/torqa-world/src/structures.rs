@@ -18,6 +18,12 @@ use crate::{LEVEL_REACH, MeshData, ROAD_HALF_WIDTH, ROAD_SINK, Shapers, palette,
 static CONCRETE: LazyLock<[f32; 4]> = LazyLock::new(|| palette::srgb("structure.concrete", 0.0));
 static STONE: LazyLock<[f32; 4]> = LazyLock::new(|| palette::srgb("structure.stone", 0.0));
 static TUNNEL_WALL: LazyLock<[f32; 4]> = LazyLock::new(|| palette::srgb("structure.tunnel", 0.0));
+/// The tube's floor, darker than its walls: lit from above like the ground outside, in the
+/// walls' colour it lay as a pale strip either side of the road.
+static TUNNEL_FLOOR: LazyLock<[f32; 4]> = LazyLock::new(|| {
+    let [r, g, b, a] = *TUNNEL_WALL;
+    [r * 0.55, g * 0.55, b * 0.55, a]
+});
 
 /// Half the deck width: the road plus a narrow kerb.
 const DECK_HALF_WIDTH: f64 = 3.6;
@@ -1080,7 +1086,9 @@ async fn tunnel<M: ElevationModel>(
     }
     for (i, pair) in run.windows(2).enumerate() {
         let a = pair[0];
-        // The floor, just under the road so the two never flicker, seen from inside.
+        // The floor, just under the road so the two never flicker, seen from inside, and a
+        // skirt from each wall's foot down to it: the walls stand at the road's level, and the
+        // slit between their feet and the floor showed the hillside through.
         let sunk = |point: [f64; 3]| [point[0], point[1] - ROAD_SINK, point[2]];
         quad(
             mesh,
@@ -1091,8 +1099,22 @@ async fn tunnel<M: ElevationModel>(
                 sunk(rings[i][0]),
             ],
             [0.0, 1.0, 0.0],
-            *TUNNEL_WALL,
+            *TUNNEL_FLOOR,
         );
+        let towards_axis = right(a.centre);
+        for (foot, inward) in [(ARCH_SEGMENTS, towards_axis), (0, towards_axis.map(|v| -v))] {
+            quad(
+                mesh,
+                [
+                    rings[i][foot],
+                    rings[i + 1][foot],
+                    sunk(rings[i + 1][foot]),
+                    sunk(rings[i][foot]),
+                ],
+                inward,
+                *TUNNEL_FLOOR,
+            );
+        }
         for k in 0..ARCH_SEGMENTS {
             let corners = [
                 rings[i][k],
