@@ -1,8 +1,10 @@
 shader_type spatial;
 // Railways (#75, ADR 0011): a bed of ballast with sleepers across it and two rails along it, in
 // flat palette colours, faceted like the ground. UV.x runs 0–1 across the bed, UV.y is the
-// distance along the line in metres. Where sleepers and rails would be finer than a pixel they
-// give way to their average colour, so they never shimmer in the distance.
+// distance along the line in metres. Where sleepers would be finer than a pixel along the line,
+// or the rails across it, each gives way to its average colour, so they never shimmer in the
+// distance; each on its own, as a line seen along its length foreshortens the sleepers long
+// before the rails.
 
 uniform vec3 ballast_color : source_color = vec3(0.659, 0.635, 0.612);
 uniform vec3 sleeper_color : source_color = vec3(0.478, 0.341, 0.333);
@@ -29,12 +31,15 @@ void fragment() {
 	float sleeper = band(abs(across), -1.0, SLEEPER_LENGTH * 0.5)
 		* band(mod(along, SLEEPER_SPACING), 0.0, SLEEPER_WIDTH);
 	float rails = band(abs(across), GAUGE * 0.5 - RAIL * 0.5, GAUGE * 0.5 + RAIL * 0.5);
-	vec3 detailed = mix(mix(ballast_color, sleeper_color, sleeper), rail_color, rails);
-	// The average: sleepers cover about a third of the middle, rails a little.
-	vec3 average = mix(mix(ballast_color, sleeper_color, 0.3), rail_color, 0.06);
-	float pixel = max(fwidth(across), fwidth(along));
-	float detail = 1.0 - smoothstep(0.03, 0.1, pixel);
-	ALBEDO = mix(average, detailed, detail);
+	// Sleepers hold until a pixel spans a good part of their spacing along the line, rails
+	// until it spans a good part of the gauge across it: their edges are already a pixel
+	// soft, so they thin out before they go.
+	float sleepers_kept = 1.0 - smoothstep(0.15, 0.4, fwidth(along));
+	float rails_kept = 1.0 - smoothstep(0.25, 0.6, fwidth(across));
+	// The averages: sleepers cover about a third of the middle, rails a little.
+	float sleeper_mix = mix(0.3 * band(abs(across), -1.0, SLEEPER_LENGTH * 0.5), sleeper, sleepers_kept);
+	float rail_mix = mix(0.06, rails, rails_kept);
+	ALBEDO = mix(mix(ballast_color, sleeper_color, sleeper_mix), rail_color, rail_mix);
 	ROUGHNESS = 0.9;
 	SPECULAR = 0.2;
 }
