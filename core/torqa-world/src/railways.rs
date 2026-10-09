@@ -40,7 +40,7 @@ const UNDER_ROAD: f64 = 7.0;
 const AT_ROAD: f64 = 0.03;
 /// A track this close alongside one laid out before runs with it — at its height, on its
 /// bridges and in its tunnels — as parallel tracks do (#99).
-const PARALLEL_M: f64 = 7.0;
+pub(crate) const PARALLEL_M: f64 = 7.0;
 
 /// A railway near the route: its points a few metres apart, to keep plants off it.
 pub(crate) struct Railway {
@@ -261,6 +261,7 @@ fn lay_out(
                 elevation: heights[k],
                 distance: along[k],
                 surface: surfaces[k],
+                mapped: kept[k] != Surface::Ground,
             })
             .collect(),
     )

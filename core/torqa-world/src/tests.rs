@@ -694,27 +694,16 @@ async fn railways_tunnel_through_hills_rather_than_climb_them() {
         .filter(|v| (v[0] - 300.0).abs() < 6.0 && (v[2] + 500.0).abs() < 20.0)
         .count();
     assert!(tube > 10, "no tunnel under the hill");
-    // It enters the hill through portals: a ring round the opening at either end of the tube,
-    // its face out along the line (#135).
-    let faces: Vec<_> = world
+    // The map has no tunnel here: the ground's shape found it, and it stays in the hill as it
+    // is, without a portal ring facing out along the line at either end (#135, #155).
+    let rings = world
         .structures
         .vertices
         .iter()
         .zip(&world.structures.normals)
-        .filter(|(v, _)| (v[0] - 300.0).abs() < 6.0)
-        .collect();
-    let (south, north) = faces
-        .iter()
-        .filter(|(_, n)| n[2].abs() < 0.01)
-        .fold((f32::MAX, f32::MIN), |(low, high), (v, _)| {
-            (low.min(-v[2]), high.max(-v[2]))
-        });
-    for (end, facing) in [(south, 1.0_f32), (north, -1.0)] {
-        let wall = faces
-            .iter()
-            .any(|(v, n)| n[2] * facing > 0.99 && (v[2] + end).abs() < 0.5);
-        assert!(wall, "no portal ring at the tunnel's end at {end} m");
-    }
+        .filter(|(v, n)| (v[0] - 300.0).abs() < 6.0 && n[2].abs() > 0.99)
+        .count();
+    assert_eq!(rings, 0, "a portal ring on a tunnel the map does not have");
 }
 
 #[tokio::test]
@@ -941,6 +930,67 @@ async fn bridges_over_the_road_keep_it_clear() {
 }
 
 #[tokio::test]
+async fn parallel_tracks_enter_a_tunnel_through_one_portal() {
+    // Two tracks 4.5 m apart under a hill whose edge runs slantwise across them, so the hill
+    // covers the eastern track 45 m later than the western one. Both tubes must begin where
+    // the hill covers both: the stretch the eastern track would open onto the ground beside
+    // the western track's tube would bare it (#135, #99).
+    struct Slant;
+    impl ElevationModel for Slant {
+        fn elevation(
+            &mut self,
+            lat: f64,
+            lon: f64,
+        ) -> impl std::future::Future<Output = Result<f64, String>> + Send {
+            let east = (lon - 7.0) * METERS_PER_DEGREE * 46f64.to_radians().cos();
+            let north = (lat - 46.0) * METERS_PER_DEGREE;
+            let edge = 400.0 + (east - 300.0) * 10.0;
+            std::future::ready(Ok(if north > edge { 540.0 } else { 500.0 }))
+        }
+    }
+    let map = MapData {
+        railways: vec![
+            railway(
+                &[(300.0, 300.0), (300.0, 700.0)],
+                Some(StructureKind::Tunnel),
+            ),
+            railway(
+                &[(304.5, 300.0), (304.5, 700.0)],
+                Some(StructureKind::Tunnel),
+            ),
+            railway(&[(300.0, 100.0), (300.0, 300.0)], None),
+            railway(&[(304.5, 100.0), (304.5, 300.0)], None),
+            railway(&[(300.0, 700.0), (300.0, 900.0)], None),
+            railway(&[(304.5, 700.0), (304.5, 900.0)], None),
+        ],
+        ..MapData::default()
+    };
+    let world = generate(&route_north(&[]).await, &mut Slant, &map, &mut |_, _| {}).await;
+
+    let inside = palette::srgb("structure.tunnel", 0.0);
+    let entrance = |x: f32| {
+        world
+            .structures
+            .vertices
+            .iter()
+            .zip(&world.structures.colors)
+            .filter(|(v, colour)| **colour == inside && (v[0] - x).abs() < 2.0)
+            .map(|(v, _)| -v[2])
+            .fold(f32::MAX, f32::min)
+    };
+    let (west, east) = (entrance(300.0), entrance(304.5));
+    assert!(west < 1e6 && east < 1e6, "no tubes: {west} {east}");
+    assert!(
+        (west - east).abs() < 3.0,
+        "the tubes begin apart: west at {west} m, east at {east} m"
+    );
+    assert!(
+        east > 420.0,
+        "the eastern tube begins at {east} m, before the hill covers it"
+    );
+}
+
+#[tokio::test]
 async fn parallel_tracks_share_one_tunnel_and_one_bridge() {
     // Two tracks 4.5 m apart, mapped each on its own, through a hill at 300 m and over a
     // bridge across a valley at 700 m (#99).
@@ -993,7 +1043,8 @@ async fn parallel_tracks_share_one_tunnel_and_one_bridge() {
             "at {north} m the tracks lie at {a} and {b}"
         );
     }
-    // A tunnel and a bridge, neither standing on a track: no wall or parapet between them.
+    // A tunnel and a bridge, neither standing on a track: no wall or parapet between them
+    // (the tunnel's floor, level under both, is no wall).
     let structures: Vec<_> = triangles(&world.structures).collect();
     for north in [300.0_f32, 700.0] {
         let here: Vec<_> = structures
@@ -1003,6 +1054,19 @@ async fn parallel_tracks_share_one_tunnel_and_one_bridge() {
         assert!(here.len() > 20, "no structure at {north} m");
         let track = height(300.0, north);
         let on_a_track = here.iter().any(|t| {
+            let (u, v) = (
+                [0, 1, 2].map(|k| t[1][k] - t[0][k]),
+                [0, 1, 2].map(|k| t[2][k] - t[0][k]),
+            );
+            let normal = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            let length = (normal[0].powi(2) + normal[1].powi(2) + normal[2].powi(2)).sqrt();
+            if length > 0.0 && (normal[1] / length).abs() > 0.9 {
+                return false;
+            }
             let middle = [0, 1, 2].map(|k| (t[0][k] + t[1][k] + t[2][k]) / 3.0);
             let beside = |east: f32| (middle[0] - east).abs() < railways::BED_M as f32 / 2.0 + 0.3;
             (beside(300.0) || beside(304.5)) && (track - 0.5..track + 3.0).contains(&middle[1])
@@ -2787,6 +2851,15 @@ async fn tunnels_are_tubes_visible_from_inside() {
         .map(|(v, _)| v[1])
         .fold(f32::MIN, f32::max);
     assert!((top - 505.0).abs() < 0.1, "arch 5 m high: {top}");
+    // A floor between the arch's feet, just under the road, facing up: the strip between the
+    // road's edge and the wall must not open onto the void (#135).
+    let floor = mesh
+        .vertices
+        .iter()
+        .zip(&mesh.normals)
+        .filter(|(v, n)| n[1] > 0.99 && (v[1] - (500.0 - 0.15)).abs() < 0.05 && v[0].abs() > 4.9)
+        .count();
+    assert!(floor > 10, "no floor under the tube's walls");
 }
 
 #[tokio::test]

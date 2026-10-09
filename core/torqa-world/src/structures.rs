@@ -13,11 +13,17 @@ use torqa_routes::{ElevationModel, LocalProjection, Surface};
 
 use crate::road::{CentrePoint, Plane, RoadIndex, TunnelRun};
 use crate::streets::{Levels, Street};
-use crate::{LEVEL_REACH, MeshData, ROAD_HALF_WIDTH, Shapers, palette, railways, shape};
+use crate::{LEVEL_REACH, MeshData, ROAD_HALF_WIDTH, ROAD_SINK, Shapers, palette, railways, shape};
 
 static CONCRETE: LazyLock<[f32; 4]> = LazyLock::new(|| palette::srgb("structure.concrete", 0.0));
 static STONE: LazyLock<[f32; 4]> = LazyLock::new(|| palette::srgb("structure.stone", 0.0));
 static TUNNEL_WALL: LazyLock<[f32; 4]> = LazyLock::new(|| palette::srgb("structure.tunnel", 0.0));
+/// The tube's floor, darker than its walls: lit from above like the ground outside, in the
+/// walls' colour it lay as a pale strip either side of the road.
+static TUNNEL_FLOOR: LazyLock<[f32; 4]> = LazyLock::new(|| {
+    let [r, g, b, a] = *TUNNEL_WALL;
+    [r * 0.55, g * 0.55, b * 0.55, a]
+});
 
 /// Half the deck width: the road plus a narrow kerb.
 const DECK_HALF_WIDTH: f64 = 3.6;
@@ -298,7 +304,8 @@ impl Portal {
 /// tube starts there, the approach runs in a cutting up to the portal and the hill over the
 /// tunnel stays as it is. A tunnel of the road ridden that the ground never covers (a gallery,
 /// or a cliff the terrain data misses) keeps its mapped ends as portals, and the ground is
-/// heaped over it; a railway's stays as mapped, without portals.
+/// heaped over it; a railway's stays as mapped, without portals, as does one the map does not
+/// have (#155).
 pub(crate) async fn open_portals<M: ElevationModel>(
     road: &mut RoadIndex,
     rails: &mut RoadIndex,
@@ -307,8 +314,6 @@ pub(crate) async fn open_portals<M: ElevationModel>(
     model: &mut M,
 ) -> Vec<Portal> {
     let (road_runs, rail_runs) = (road.tunnels(), rails.tunnels());
-    // The hill over a tunnel is looked at with the cuttings leading to it ending where it is
-    // mapped to begin, not rounding off into the hill.
     for run in &road_runs {
         road.set_portals(run, Some((0, 0)));
     }
@@ -336,6 +341,7 @@ pub(crate) async fn open_portals<M: ElevationModel>(
             rail_openings.push(open_ends(run, tube(true), &shapers, projection, model).await);
         }
     }
+    share_openings(&rail_runs, &mut rail_openings);
     let mut portals = Vec::new();
     for (index, runs, openings, railway) in [
         (road, &road_runs, road_openings, false),
@@ -355,6 +361,40 @@ pub(crate) async fn open_portals<M: ElevationModel>(
         }
     }
     portals
+}
+
+/// Gives tunnel runs lying side by side, their ends within `railways::PARALLEL_M` of each
+/// other, the same openings, the latest of theirs at either end: parallel tracks share one
+/// tunnel (#99), and the stretch one of them opened onto the ground beside the other's tube
+/// would bare it. A run too short for the shared opening keeps its own.
+fn share_openings(runs: &[TunnelRun], openings: &mut [Option<(usize, usize)>]) {
+    let ends = |run: &TunnelRun| {
+        (
+            run.points[0].position,
+            run.points[run.points.len() - 1].position,
+        )
+    };
+    let near = |a: (f64, f64), b: (f64, f64)| distance(a, b) <= railways::PARALLEL_M;
+    for i in 0..runs.len() {
+        let Some((mut start, mut end)) = openings[i] else {
+            continue;
+        };
+        let (a0, a1) = ends(&runs[i]);
+        for (j, other) in runs.iter().enumerate() {
+            let (b0, b1) = ends(other);
+            if j != i
+                && near(a0, b0)
+                && near(a1, b1)
+                && let Some((s, e)) = openings[j]
+            {
+                start = start.max(s);
+                end = end.max(e);
+            }
+        }
+        if start + end + 2 < runs[i].points.len() {
+            openings[i] = Some((start, end));
+        }
+    }
 }
 
 /// How many segments at either end of a tunnel `run` lie before the ground rises over its
@@ -1005,9 +1045,12 @@ impl<'a> Path<'a> {
     }
 }
 
-/// An arched tube from its left edge to its right one, at most `TUNNEL_HEIGHT` high. A railway
-/// tunnel passing under the road ridden (`over`) is cut flat below the ground the road shapes
-/// there, so it never shows through the road or its cuttings and embankments (#138).
+/// An arched tube from its left edge to its right one, at most `TUNNEL_HEIGHT` high, on a floor
+/// between the feet of its arch: the hill's ground is drawn over the tube, not inside it, so
+/// without a floor the strip between the road's edge and the wall opened onto the void and the
+/// valley beyond showed through from inside (#135). A railway tunnel passing under the road
+/// ridden (`over`) is cut flat below the ground the road shapes there, so it never shows
+/// through the road or its cuttings and embankments (#138).
 async fn tunnel<M: ElevationModel>(
     mesh: &mut MeshData,
     run: &[Section],
@@ -1043,6 +1086,35 @@ async fn tunnel<M: ElevationModel>(
     }
     for (i, pair) in run.windows(2).enumerate() {
         let a = pair[0];
+        // The floor, just under the road so the two never flicker, seen from inside, and a
+        // skirt from each wall's foot down to it: the walls stand at the road's level, and the
+        // slit between their feet and the floor showed the hillside through.
+        let sunk = |point: [f64; 3]| [point[0], point[1] - ROAD_SINK, point[2]];
+        quad(
+            mesh,
+            [
+                sunk(rings[i][ARCH_SEGMENTS]),
+                sunk(rings[i + 1][ARCH_SEGMENTS]),
+                sunk(rings[i + 1][0]),
+                sunk(rings[i][0]),
+            ],
+            [0.0, 1.0, 0.0],
+            *TUNNEL_FLOOR,
+        );
+        let towards_axis = right(a.centre);
+        for (foot, inward) in [(ARCH_SEGMENTS, towards_axis), (0, towards_axis.map(|v| -v))] {
+            quad(
+                mesh,
+                [
+                    rings[i][foot],
+                    rings[i + 1][foot],
+                    sunk(rings[i + 1][foot]),
+                    sunk(rings[i][foot]),
+                ],
+                inward,
+                *TUNNEL_FLOOR,
+            );
+        }
         for k in 0..ARCH_SEGMENTS {
             let corners = [
                 rings[i][k],

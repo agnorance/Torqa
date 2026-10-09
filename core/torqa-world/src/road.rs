@@ -53,6 +53,9 @@ struct Segment {
     distance_b: f64,
     /// What carries the road on this segment.
     surface: Surface,
+    /// Whether the map has that structure, rather than the ground's shape finding it
+    /// (`railways`).
+    mapped: bool,
     /// The route rides this stretch of road a second time: it is drawn by the first pass.
     repeat: bool,
     /// The planes of the tunnel portals this open stretch leads to, ahead and behind
@@ -69,6 +72,9 @@ pub(crate) struct Centre {
     /// Distance along the line.
     pub(crate) distance: f64,
     pub(crate) surface: Surface,
+    /// Whether the map has the structure carrying it, rather than the ground's shape finding
+    /// it (`railways`); true on the ground.
+    pub(crate) mapped: bool,
 }
 
 /// Centre lines in local coordinates, indexed for nearest-point queries: the route's (a smooth
@@ -90,6 +96,7 @@ impl RoadIndex {
                 elevation: p.elevation.0,
                 distance: p.distance.0,
                 surface: p.surface,
+                mapped: true,
             })
             .collect();
         let mut index = Self::from_lines(&[smooth_curve(&points)]);
@@ -150,6 +157,11 @@ impl RoadIndex {
                     w[1].surface
                 } else {
                     w[0].surface
+                },
+                mapped: if w[0].surface == Surface::Ground {
+                    w[1].mapped
+                } else {
+                    w[0].mapped
                 },
             }));
             if segments.len() > start {
@@ -413,7 +425,10 @@ impl RoadIndex {
         runs
     }
 
-    /// The tunnels of the lines, each as one run of segments.
+    /// The tunnels of the lines, each as one run of segments: the stretch the map has. A
+    /// stretch the ground's shape found (`railways`), on its own or leading into a mapped
+    /// tunnel, is no run: it stays in the hill as it is, without a portal or a cutting that
+    /// would make the invention look deliberate (#155).
     pub(crate) fn tunnels(&self) -> Vec<TunnelRun> {
         let mut runs = Vec::new();
         for line in &self.lines {
@@ -423,11 +438,16 @@ impl RoadIndex {
                     k += 1;
                     continue;
                 }
-                let start = k;
+                let begin = k;
                 while k < line.end && self.segments[k].surface == Surface::Tunnel {
                     k += 1;
                 }
-                let run = &self.segments[start..k];
+                let mut mapped = (begin..k).filter(|&i| self.segments[i].mapped);
+                let (Some(start), Some(last)) = (mapped.clone().next(), mapped.next_back()) else {
+                    continue;
+                };
+                let end = last + 1;
+                let run = &self.segments[start..end];
                 let mut points: Vec<CentrePoint> = run
                     .iter()
                     .map(|s| centre_point(s, s.a, s.elevation_a))
@@ -435,10 +455,10 @@ impl RoadIndex {
                 let last = &run[run.len() - 1];
                 points.push(centre_point(last, last.b, last.elevation_b));
                 runs.push(TunnelRun {
-                    segments: start..k,
+                    segments: start..end,
                     line: line.clone(),
                     points,
-                    open: (start > line.start, k < line.end),
+                    open: (start > line.start, end < line.end),
                 });
             }
         }
@@ -709,6 +729,11 @@ fn smooth_curve(points: &[Centre]) -> Vec<Centre> {
                     p1.surface
                 } else {
                     p2.surface
+                },
+                mapped: if u == 0.0 || p1.surface != Surface::Ground {
+                    p1.mapped
+                } else {
+                    p2.mapped
                 },
             });
         }

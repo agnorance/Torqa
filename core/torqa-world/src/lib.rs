@@ -71,7 +71,7 @@ const TUNNEL_HILL_COVER: f64 = 1.0;
 const TUNNEL_HILL_SHOULDER: f64 = 1.0;
 /// Level ground sits this far below the road surface, so the two never flicker; the road's edge
 /// bevels down to it (road.rs). Other streets lie between the two where they join the road.
-const ROAD_SINK: f64 = 0.15;
+pub(crate) const ROAD_SINK: f64 = 0.15;
 /// A cell levelled across a street is split into fine pieces only where they would depart from
 /// its plain triangles by more than this.
 const PLAIN_TOLERANCE: f64 = 0.02;
