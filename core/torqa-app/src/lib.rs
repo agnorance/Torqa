@@ -740,6 +740,7 @@ impl App {
             ));
         }
         let (video, pace) = video::paced_video(video).map_err(AppError::Video)?;
+        let kept_from = video.clone();
         let source = video::VideoSource {
             video,
             name: name.clone(),
@@ -758,7 +759,7 @@ impl App {
         // The course's own copy of the video, beside it, follows in the background: a copy
         // across disks takes a while (#165). The course refers to the original until then;
         // the course file is changed from the frame loop only, like every other change to it.
-        let video = video.to_owned();
+        let video = kept_from;
         let tx = self.jobs_tx.clone();
         self.runtime.spawn_blocking(move || {
             let _ = tx.send(match course::keep_video(&video, &course, size) {
