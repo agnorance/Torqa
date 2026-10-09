@@ -1205,6 +1205,8 @@ impl TorqaApp {
                 Drivetrain::Cassette => 14,
             },
             "default_difficulty_pct" => p.default_difficulty.0,
+            "power_zones_pct" => &percent(&p.power_zones),
+            "heart_rate_zones_pct" => &percent(&p.heart_rate_zones),
         }
     }
 
@@ -1248,6 +1250,11 @@ impl TorqaApp {
             default_difficulty: Percent(
                 number("default_difficulty_pct", defaults.default_difficulty.0).clamp(0.0, 100.0),
             ),
+            power_zones: Profile::sane_power_zones(&shares(&data, "power_zones_pct")),
+            heart_rate_zones: Profile::sane_heart_rate_zones(&shares(
+                &data,
+                "heart_rate_zones_pct",
+            )),
             language: data
                 .get("language")
                 .and_then(|v| v.try_to::<GString>().ok())
@@ -1819,6 +1826,19 @@ fn hud_values(app: &App) -> VarDictionary {
         values.set(id, &value.map_or_else(Variant::nil, |v| v.to_variant()));
     }
     values
+}
+
+/// Zone bounds as percentages, for the rider settings.
+fn percent(bounds: &[f64]) -> PackedFloat64Array {
+    bounds.iter().map(|b| b * 100.0).collect()
+}
+
+/// Zone bounds from `data[key]` in percent, as shares; empty where missing.
+fn shares(data: &VarDictionary, key: &str) -> Vec<f64> {
+    data.get(key)
+        .and_then(|v| v.try_to::<PackedFloat64Array>().ok())
+        .map(|a| a.as_slice().iter().map(|p| p / 100.0).collect())
+        .unwrap_or_default()
 }
 
 /// Preview points as Godot vectors.
