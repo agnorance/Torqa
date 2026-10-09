@@ -723,6 +723,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_reference_route_reads_as_its_planner_wrote_it() {
+        // #167: the Oberalp fixture by the planner's own elevations, without tiles.
+        let xml = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/oberalp.gpx"
+        ))
+        .unwrap();
+        let route = Route::from_gpx(&xml, None).await.unwrap();
+
+        assert_eq!(route.name(), Some("Oberalp"));
+        assert!(
+            (33_400.0..33_900.0).contains(&route.length().0),
+            "{}",
+            route.length().0
+        );
+        // Andermatt 1435 m to the pass at 2044 m and down to Disentis at 1130 m.
+        let gain = route.elevation_gain().0;
+        assert!((580.0..760.0).contains(&gain), "gain {gain}");
+        assert_eq!(route.elevation_source(), ElevationSource::File);
+        // Without the map the planner's chords through the tunnels stay, and the grades
+        // along them say nothing: `the_reference_route_follows_the_map_at_road_grades` in
+        // torqa-app checks those against the cached tiles.
+    }
+
+    #[tokio::test]
     async fn reports_grade_of_a_steady_climb() {
         // 5 % for 2 km: smoothing must not change a constant gradient.
         let elevations: Vec<_> = (0..=20).map(|i| Some(f64::from(i) * 5.0)).collect();

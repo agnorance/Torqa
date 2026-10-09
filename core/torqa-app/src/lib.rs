@@ -2562,6 +2562,40 @@ mod tests {
         assert!(app.route().is_some());
     }
 
+    /// The reference route (#167) imported as a rider would, from the map and terrain tiles in
+    /// the cache: run `torqa-cli route core/fixtures/oberalp.gpx` once online, then
+    /// `cargo test -p torqa-app -- --ignored reference_route`.
+    #[test]
+    #[ignore = "needs the Oberalp's map and terrain tiles in the cache"]
+    fn the_reference_route_follows_the_map_at_road_grades() {
+        let dir = temp_dir("reference-route");
+        let mut app = App::new(dir.join("data"), paths::cache_dir()).unwrap();
+        let fixture = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/oberalp.gpx"
+        ));
+        app.load_route(fixture, true);
+        run_until(&mut app, |e| matches!(e, AppEvent::RouteLoaded(_)));
+        let route = app.route().expect("the route");
+
+        assert_eq!(route.elevation_source(), ElevationSource::Terrain);
+        assert!(
+            (33_000.0..33_900.0).contains(&route.length().0),
+            "{}",
+            route.length().0
+        );
+        // The planner drew the road through the Oberalpsee and left the tunnels' insides out:
+        // on the map's roads the route climbs like a pass road, never like a cliff (#166).
+        assert!(
+            route.max_grade().0 < 15.0,
+            "steepest {} %",
+            route.max_grade().0
+        );
+        let gain = route.elevation_gain().0;
+        assert!((550.0..900.0).contains(&gain), "gain {gain}");
+        app.shutdown();
+    }
+
     #[test]
     fn a_ride_starts_with_a_trainer_connected_before_it() {
         // As on the course page: the trainer connects, the world is built, then the ride
