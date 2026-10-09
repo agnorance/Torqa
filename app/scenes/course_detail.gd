@@ -65,6 +65,9 @@ func open(course: Dictionary) -> void:
 	_profile.set_climbs([])
 	_records.text = ""
 	_status.text = ""
+	# The rider's own default difficulty (#175); the ride's settings may change it later.
+	var rider: Dictionary = _torqa.profile()
+	_options.set_difficulty(rider.get("default_difficulty_pct", 50.0))
 	for button: Button in [_add_video_button, _align_button, _remove_video_button]:
 		button.hide()
 	_loading_bar.hide()

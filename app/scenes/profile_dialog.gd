@@ -18,6 +18,7 @@ var _rider_mass: SpinBox = _spin(30.0, 200.0, 0.5, " kg")
 var _bike_mass: SpinBox = _spin(3.0, 40.0, 0.1, " kg")
 var _ftp: SpinBox = _spin(50.0, 600.0, 1.0, " W")
 var _max_heart_rate: SpinBox = _spin(100.0, 230.0, 1.0, " bpm")
+var _difficulty: SpinBox = _spin(0.0, 100.0, 5.0, " %")
 var _units: OptionButton = OptionButton.new()
 var _language: OptionButton = OptionButton.new()
 var _avatar: OptionButton = OptionButton.new()
@@ -48,6 +49,7 @@ func _ready() -> void:
 		_bike_mass,
 		_ftp,
 		_max_heart_rate,
+		_difficulty,
 		_units,
 		_language,
 		_avatar,
@@ -81,6 +83,7 @@ func _ready() -> void:
 		["Bike weight", _bike_mass],
 		["FTP", _ftp],
 		["Max heart rate", _max_heart_rate],
+		["Trainer difficulty", _difficulty],
 		["Units", _units],
 		["Language", _language],
 		["Rider on the bike", _avatar],
@@ -115,6 +118,7 @@ func edit(profile: Dictionary, hud_layout: PackedStringArray) -> void:
 	_bike_mass.value = profile.get("bike_mass_kg", 8.0)
 	_ftp.value = profile.get("ftp_w", 200.0)
 	_max_heart_rate.value = profile.get("max_heart_rate_bpm", 185.0)
+	_difficulty.value = profile.get("default_difficulty_pct", 50.0)
 	_units.select(maxi(UNITS.find(profile.get("units", "metric")), 0))
 	_language.select(0)
 	for i: int in range(LANGUAGES.size()):
@@ -145,6 +149,7 @@ func _on_confirmed() -> void:
 				"bike_mass_kg": _bike_mass.value,
 				"ftp_w": _ftp.value,
 				"max_heart_rate_bpm": _max_heart_rate.value,
+				"default_difficulty_pct": _difficulty.value,
 				"units": UNITS[_units.selected],
 				"language": LANGUAGES[_language.selected][0],
 				"avatar": RiderAvatar.RIDERS[_avatar.selected],
