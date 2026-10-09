@@ -72,8 +72,8 @@ as the video, which takes no extra space, else a copy. The course rides on when 
 imported from is moved or deleted. Opening a course looks for the video where the course keeps
 it, then next to the course file (by name and size). To move a video course to another
 computer, copy the `.tqc` and the video into the same folder. If the video is missing, opening
-the course says which file to put there. Deleting a course leaves its video in the library
-folder, in case it is the only copy.
+the course says which file to put there. Deleting a course deletes its copy of the video too,
+unless another course rides along the same file; a video anywhere else stays where it is.
 
 ## Licences
 

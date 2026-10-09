@@ -1055,9 +1055,28 @@ impl App {
     /// # Errors
     /// [`AppError::Storage`] if the file cannot be deleted.
     pub fn delete_course(&mut self, path: &Path) -> Result<(), AppError> {
+        // The course's own copy of its video, beside it, goes with it unless another course
+        // rides along the same file (#165); a video elsewhere is the rider's and stays.
+        let video = course::read_manifest(path)
+            .ok()
+            .and_then(|manifest| manifest.video)
+            .and_then(|reference| reference.locate(path))
+            .filter(|video| video.parent() == path.parent());
         std::fs::remove_file(path).map_err(|e| AppError::Storage(e.to_string()))?;
         if self.course.as_deref() == Some(path) {
             self.course = None;
+        }
+        if let Some(video) = video {
+            let shared = self.courses().into_iter().any(|c| {
+                c.manifest
+                    .video
+                    .as_ref()
+                    .and_then(|reference| reference.locate(&c.path))
+                    .is_some_and(|other| other == video)
+            });
+            if !shared && let Err(e) = std::fs::remove_file(&video) {
+                warn!(%e, video = %video.display(), "cannot remove the course's video");
+            }
         }
         Ok(())
     }
@@ -3325,7 +3344,15 @@ mod tests {
             matches!(e, AppEvent::RouteLoaded(_) | AppEvent::Error(_))
         });
 
-        assert_eq!(later.video().map(|v| v.video.clone()), Some(kept));
+        assert_eq!(later.video().map(|v| v.video.clone()), Some(kept.clone()));
+
+        // The copy goes with the course, once no course rides along it any more.
+        let twin = file.with_file_name("twin.tqc");
+        std::fs::copy(file, &twin).unwrap();
+        later.delete_course(file).unwrap();
+        assert!(kept.is_file(), "deleted under another course");
+        later.delete_course(&twin).unwrap();
+        assert!(!kept.exists(), "left behind");
     }
 
     #[test]
