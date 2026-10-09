@@ -23,6 +23,12 @@ var _grip: Control = Control.new()
 func _init() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# The window is see-through between the panels; the panels themselves are opaque here.
+	# Over the 3D scene their translucency only tints the view, but over another window its
+	# text and icons showed through the figures.
+	var opaque: Theme = Theme.new()
+	opaque.set_stylebox("panel", "PanelContainer", UiTheme.panel(1.0))
+	theme = opaque
 	_box.add_theme_constant_override("separation", 6)
 	_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_box)
@@ -127,7 +133,7 @@ func _on_grip_input(event: InputEvent) -> void:
 
 func _draw_grip() -> void:
 	# On its own backing: over a video, bare lines would vanish.
-	_grip.draw_rect(Rect2(Vector2.ZERO, _grip.size), UiTheme.PANEL)
+	_grip.draw_rect(Rect2(Vector2.ZERO, _grip.size), Color(UiTheme.PANEL, 1.0))
 	var color: Color = UiTheme.MUTED
 	for i: int in range(3):
 		var inset: float = 3.0 + i * 4.0
