@@ -13,7 +13,7 @@ use torqa_routes::{ElevationModel, LocalProjection, Surface};
 
 use crate::road::{CentrePoint, Plane, RoadIndex, TunnelRun};
 use crate::streets::{Levels, Street};
-use crate::{LEVEL_REACH, MeshData, ROAD_HALF_WIDTH, Shapers, palette, railways, shape};
+use crate::{LEVEL_REACH, MeshData, ROAD_HALF_WIDTH, ROAD_SINK, Shapers, palette, railways, shape};
 
 static CONCRETE: LazyLock<[f32; 4]> = LazyLock::new(|| palette::srgb("structure.concrete", 0.0));
 static STONE: LazyLock<[f32; 4]> = LazyLock::new(|| palette::srgb("structure.stone", 0.0));
@@ -1039,9 +1039,12 @@ impl<'a> Path<'a> {
     }
 }
 
-/// An arched tube from its left edge to its right one, at most `TUNNEL_HEIGHT` high. A railway
-/// tunnel passing under the road ridden (`over`) is cut flat below the ground the road shapes
-/// there, so it never shows through the road or its cuttings and embankments (#138).
+/// An arched tube from its left edge to its right one, at most `TUNNEL_HEIGHT` high, on a floor
+/// between the feet of its arch: the hill's ground is drawn over the tube, not inside it, so
+/// without a floor the strip between the road's edge and the wall opened onto the void and the
+/// valley beyond showed through from inside (#135). A railway tunnel passing under the road
+/// ridden (`over`) is cut flat below the ground the road shapes there, so it never shows
+/// through the road or its cuttings and embankments (#138).
 async fn tunnel<M: ElevationModel>(
     mesh: &mut MeshData,
     run: &[Section],
@@ -1077,6 +1080,19 @@ async fn tunnel<M: ElevationModel>(
     }
     for (i, pair) in run.windows(2).enumerate() {
         let a = pair[0];
+        // The floor, just under the road so the two never flicker, seen from inside.
+        let sunk = |point: [f64; 3]| [point[0], point[1] - ROAD_SINK, point[2]];
+        quad(
+            mesh,
+            [
+                sunk(rings[i][ARCH_SEGMENTS]),
+                sunk(rings[i + 1][ARCH_SEGMENTS]),
+                sunk(rings[i + 1][0]),
+                sunk(rings[i][0]),
+            ],
+            [0.0, 1.0, 0.0],
+            *TUNNEL_WALL,
+        );
         for k in 0..ARCH_SEGMENTS {
             let corners = [
                 rings[i][k],
