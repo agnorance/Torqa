@@ -216,16 +216,16 @@ pub(crate) fn to_roads(track: &[RawPoint], roads: &[Road]) -> Snapped {
 
 /// Where two roads meet, with the positions there on each.
 type Meeting = ((f64, f64), Match, Match);
-/// A way along roads as points, with the tunnel's road if it goes through one.
-type Way = (Vec<(f64, f64)>, Option<usize>);
+/// A way along roads as points, with the roads of the tunnel it goes through, if any.
+type Way = (Vec<(f64, f64)>, Vec<usize>);
 
 /// A way into a tunnel being followed through (`tunnel_way`): the piece of it reached, the
-/// points up to it, where they enter it, and the first piece entered.
+/// points up to it, where they enter it, and the pieces entered so far.
 struct Entry {
     tunnel: usize,
     path: Vec<(f64, f64)>,
     into: Match,
-    first: usize,
+    pieces: Vec<usize>,
 }
 
 /// The roads, projected and indexed.
@@ -495,7 +495,7 @@ impl<'a> Network<'a> {
         };
         // Only a tunnel takes the sky away; elsewhere the points off road were ridden.
         let in_tunnel = |road: usize| self.roads[road].structure == Some(StructureKind::Tunnel);
-        if tunnel.is_none() && !in_tunnel(from.road) && !in_tunnel(to.road) {
+        if tunnel.is_empty() && !in_tunnel(from.road) && !in_tunnel(to.road) {
             return false;
         }
         let recorded = path_length(&positions[start - 1..=end]);
@@ -504,11 +504,11 @@ impl<'a> Network<'a> {
 
     /// The way along roads from `from` to `to`: along their road's bends, round the junction
     /// where the track changes road, through a tunnel joining their roads (`tunnel_way`, with
-    /// its road), or straight where none of that holds. `None` where the way would be a detour
-    /// (`MAX_DETOUR`): a loop of the road between the two is not what was ridden.
+    /// its roads), or straight where none of that holds. `None` where the way would be a
+    /// detour (`MAX_DETOUR`): a loop of the road between the two is not what was ridden.
     fn way(&self, from: Match, to: Match) -> Option<Way> {
         let mut path = vec![from.at];
-        let mut tunnel = None;
+        let mut tunnel = Vec::new();
         if from.road == to.road {
             path.extend(self.bends(from, to));
         } else if let Some((junction, on_from, on_to)) = self.meet(from.road, to.road, Some(to.at))
@@ -518,9 +518,9 @@ impl<'a> Network<'a> {
             path.extend(self.bends(from, on_from));
             path.push(junction);
             path.extend(self.bends(on_to, to));
-        } else if let Some((through, road)) = self.tunnel_way(from, to) {
+        } else if let Some((through, pieces)) = self.tunnel_way(from, to) {
             path.extend(through);
-            tunnel = Some(road);
+            tunnel = pieces;
         }
         path.push(to.at);
         (path_length(&path) <= distance(from.at, to.at).max(1.0) * MAX_DETOUR)
@@ -528,10 +528,10 @@ impl<'a> Network<'a> {
     }
 
     /// The way from `from` to `to` through a tunnel joining their roads: the points between
-    /// the two, and the tunnel's road where the way leaves `from`'s. The map splits a way where
-    /// it enters a tunnel, and at tile borders, so the tunnel may be several roads meeting end
-    /// to end (`TUNNEL_PIECES` at most); the shortest way where several lead through.
-    fn tunnel_way(&self, from: Match, to: Match) -> Option<(Vec<(f64, f64)>, usize)> {
+    /// the two, and the tunnel's roads. The map splits a way where it enters a tunnel, and at
+    /// tile borders, so the tunnel may be several roads meeting end to end (`TUNNEL_PIECES` at
+    /// most); the shortest way where several lead through.
+    fn tunnel_way(&self, from: Match, to: Match) -> Option<Way> {
         let mut best: Option<(f64, Way)> = None;
         // Ways into the tunnels so far: the tunnel, the points up to it and where they enter it.
         let mut frontier: Vec<Entry> = Vec::new();
@@ -546,7 +546,7 @@ impl<'a> Network<'a> {
                     tunnel,
                     path,
                     into,
-                    first: tunnel,
+                    pieces: vec![tunnel],
                 });
             }
         }
@@ -561,7 +561,7 @@ impl<'a> Network<'a> {
                     through.extend(self.bends(on_to, to));
                     let length = path_length(&through);
                     if best.as_ref().is_none_or(|b| length < b.0) {
-                        best = Some((length, (through, Some(entry.first))));
+                        best = Some((length, (through, entry.pieces.clone())));
                     }
                     continue;
                 }
@@ -575,11 +575,13 @@ impl<'a> Network<'a> {
                         path.extend(self.bends(entry.into, out_of));
                         path.push(joint);
                         visited.push(other);
+                        let mut pieces = entry.pieces.clone();
+                        pieces.push(other);
                         next.push(Entry {
                             tunnel: other,
                             path,
                             into,
-                            first: entry.first,
+                            pieces,
                         });
                     }
                 }
@@ -589,7 +591,7 @@ impl<'a> Network<'a> {
             }
             frontier = next;
         }
-        best.and_then(|(_, (through, tunnel))| tunnel.map(|t| (through, t)))
+        best.map(|(_, way)| way)
     }
 
     /// The way from `from` to `to` (the positions on roads of two consecutive points `ends`)
@@ -938,9 +940,11 @@ mod tests {
         let every_5 = |from: i32, to: i32| -> Vec<(f64, f64)> {
             (from..=to).map(|i| arc(f64::from(i) * 5.0)).collect()
         };
+        // The tunnel in two pieces, as a tile border cuts it.
         let roads = [
             road(&every_5(0, 2)),
-            tunnel(&every_5(2, 16)),
+            tunnel(&every_5(2, 9)),
+            tunnel(&every_5(9, 16)),
             road(&every_5(16, 18)),
         ];
         let mut track: Vec<RawPoint> = (0..=2).map(|i| point2(arc(f64::from(i) * 5.0))).collect();
@@ -962,8 +966,8 @@ mod tests {
         }
         // ...as long as the road, not the chords between the wandering points...
         assert!((length(&line) - std::f64::consts::FRAC_PI_2 * 300.0).abs() < 5.0);
-        // ...and the tunnel ridden comes with it.
-        assert_eq!(snapped.structures.len(), 1, "{:?}", snapped.structures);
+        // ...and the tunnel ridden comes with it, both pieces.
+        assert_eq!(snapped.structures.len(), 2, "{:?}", snapped.structures);
     }
 
     #[test]
