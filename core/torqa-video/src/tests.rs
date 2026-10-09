@@ -310,50 +310,24 @@ fn pictures_passed_over_on_the_way_to_a_frame_are_not_converted() {
     std::fs::remove_file(path).unwrap();
 }
 
-/// Plays a real video as a ride at 1× would, asking for the frame at the wall clock's time,
-/// and reports how it keeps up: `TORQA_VIDEO=<file> cargo test -p torqa-video --release --
-/// --ignored real_video --nocapture`.
+/// Plays a real video as a ride at 1× would and reports how it keeps up, like `torqa-cli
+/// video`: `TORQA_VIDEO=<file> cargo test -p torqa-video --release -- --ignored real_video
+/// --nocapture`.
 #[test]
 #[ignore = "needs a real video in TORQA_VIDEO"]
 fn a_real_video_keeps_up_with_the_clock() {
     let path = std::env::var("TORQA_VIDEO").expect("TORQA_VIDEO");
-    let mut video = Video::open(Path::new(&path)).unwrap();
-    let info = video.info();
-    println!("{info:?}");
-    let play = Duration::from_secs(8).min(info.duration);
-    let start = std::time::Instant::now();
-    let (mut delivered, mut last) = (0, None);
-    let mut gaps: Vec<f64> = Vec::new();
-    let mut previous = start;
-    while start.elapsed() < play {
-        let frame = video.frame_at(start.elapsed()).unwrap();
-        if last != Some(frame.time) {
-            last = Some(frame.time);
-            delivered += 1;
-            gaps.push(previous.elapsed().as_secs_f64());
-            previous = std::time::Instant::now();
-        }
-    }
-    gaps.sort_by(f64::total_cmp);
+    let report = benchmark(Path::new(&path), 8).unwrap();
     println!(
-        "{delivered} frames in {:.1} s ({:.1}/s), longest wait {:.2} s, median {:.3} s",
-        play.as_secs_f64(),
-        f64::from(delivered) / play.as_secs_f64(),
-        gaps.last().copied().unwrap_or(0.0),
-        gaps.get(gaps.len() / 2).copied().unwrap_or(0.0)
+        "{:?}\n{} frames in {:.1} s ({:.1}/s), longest wait {:.2} s, median {:.3} s\nstraight decoding: {:.1} frames/s, keeps up: {}",
+        report.info,
+        report.delivered,
+        report.played.as_secs_f64(),
+        report.delivered_per_second(),
+        report.longest_wait.as_secs_f64(),
+        report.median_wait.as_secs_f64(),
+        report.straight_per_second,
+        report.keeps_up()
     );
-    // Straight decoding, no clock: the raw throughput.
-    video.seek(Duration::ZERO).unwrap();
-    let start = std::time::Instant::now();
-    let mut frames = 0;
-    while let Ok(Some(_)) = video.decode_next() {
-        frames += 1;
-        if start.elapsed() > Duration::from_secs(5) {
-            break;
-        }
-    }
-    println!(
-        "straight decoding: {:.1} frames/s",
-        f64::from(frames) / start.elapsed().as_secs_f64()
-    );
+    assert!(report.keeps_up(), "{report:?}");
 }
