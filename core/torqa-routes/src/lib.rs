@@ -338,6 +338,20 @@ impl Route {
         )
     }
 
+    /// Total climbing still ahead from `distance` along the route: the rises between its
+    /// points from there to the end, the first one from the height at `distance`.
+    #[must_use]
+    pub fn ascent_ahead(&self, distance: Meters) -> Meters {
+        let here = self.position(distance).elevation.0;
+        let mut ahead = 0.0;
+        let mut last = here;
+        for point in self.points.iter().filter(|p| p.distance.0 > distance.0) {
+            ahead += (point.elevation.0 - last).max(0.0);
+            last = point.elevation.0;
+        }
+        Meters(ahead)
+    }
+
     /// The steepest climbing gradient anywhere on the route.
     #[must_use]
     pub fn max_grade(&self) -> GradePercent {
@@ -720,6 +734,54 @@ mod tests {
             route.length()
         );
         assert_eq!(route.elevation_source(), ElevationSource::File);
+    }
+
+    #[tokio::test]
+    async fn ascent_ahead_counts_the_rises_still_to_come() {
+        // Up 50 m over 500 m, down 20 m over 200 m, up 30 m over 300 m.
+        let mut xml = String::from("<gpx><trk><trkseg>");
+        for i in 0..=100 {
+            let metres = f64::from(i) * 10.0;
+            let elevation = if metres <= 500.0 {
+                500.0 + metres / 10.0
+            } else if metres <= 700.0 {
+                550.0 - (metres - 500.0) / 10.0
+            } else {
+                530.0 + (metres - 700.0) / 10.0
+            };
+            let lat = 46.0 + metres / 111_195.0;
+            let _ = write!(
+                xml,
+                r#"<trkpt lat="{lat}" lon="7.0"><ele>{elevation}</ele></trkpt>"#
+            );
+        }
+        xml.push_str("</trkseg></trk></gpx>");
+        let route = Route::from_gpx(&xml, None).await.unwrap();
+
+        // Smoothing rounds the top and the dip off, so a little under 80 m in all.
+        let total = route.elevation_gain().0;
+        assert!((65.0..80.0).contains(&total), "gain {total}");
+        // At the start all of it; halfway up the first climb, the rest of it and the last
+        // climb; in the dip, the last climb only; at the end nothing. Never more than before.
+        let ahead = |metres: f64| route.ascent_ahead(Meters(metres)).0;
+        assert!((ahead(0.0) - total).abs() < 0.5, "{}", ahead(0.0));
+        assert!(
+            (0.6 * total..0.75 * total).contains(&ahead(250.0)),
+            "{}",
+            ahead(250.0)
+        );
+        assert!(
+            (0.3 * total..0.45 * total).contains(&ahead(650.0)),
+            "{}",
+            ahead(650.0)
+        );
+        assert!(
+            ahead(route.length().0) < 0.01,
+            "{}",
+            ahead(route.length().0)
+        );
+        let along: Vec<f64> = (0..=20).map(|k| ahead(f64::from(k) * 50.0)).collect();
+        assert!(along.windows(2).all(|w| w[1] <= w[0] + 1e-9), "{along:?}");
     }
 
     #[tokio::test]
