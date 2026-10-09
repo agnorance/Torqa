@@ -553,6 +553,8 @@ func _courses_tab() -> void:
 	detail.show()
 	tabs.get_tab_bar().tab_clicked.emit(StartPage.Tab.COURSES)
 	_check(courses.visible and not detail.visible, "the Courses tab brings the gallery back")
+
+
 ## Switching riders changes the avatar on the bike at once, not only with the next world.
 func _rider_switch() -> void:
 	var main: Control = (load(MAIN_SCENE) as PackedScene).instantiate()

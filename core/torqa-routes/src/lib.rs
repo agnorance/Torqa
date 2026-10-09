@@ -914,6 +914,9 @@ mod tests {
         );
         let along: Vec<f64> = (0..=20).map(|k| ahead(f64::from(k) * 50.0)).collect();
         assert!(along.windows(2).all(|w| w[1] <= w[0] + 1e-9), "{along:?}");
+    }
+
+    #[tokio::test]
     async fn the_reference_route_reads_as_its_planner_wrote_it() {
         // #167: the Oberalp fixture by the planner's own elevations, without tiles.
         let xml = std::fs::read_to_string(concat!(
