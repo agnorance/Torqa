@@ -1138,3 +1138,18 @@ msgstr "Nächste Kamera"
 
 msgid "Overlay on / off"
 msgstr "Overlay ein / aus"
+
+msgid "Pause"
+msgstr "Pause"
+
+msgid "Resume"
+msgstr "Weiter"
+
+msgid "Paused"
+msgstr "Pausiert"
+
+msgid "Pause the ride: the clock and the trainer wait (P)"
+msgstr "Fahrt pausieren: Uhr und Trainer warten (P)"
+
+msgid "Pause the ride (P)"
+msgstr "Fahrt pausieren (P)"

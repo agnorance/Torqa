@@ -70,6 +70,7 @@ var _plan_chart: WorkoutChart = WorkoutChart.new()
 ## The overlay (R55): only the HUD and the workout, the rest of the screen hidden meanwhile.
 var _overlay_hud: OverlayHud = OverlayHud.new()
 var _overlay_button: Button = Button.new()
+var _pause_button: Button = Button.new()
 var _hidden_by_overlay: Array[Control] = []
 var _time_scale: float = 1.0
 ## The virtual gear shown last (R9), to tell the rider of a shift; 0 before the first.
@@ -111,6 +112,8 @@ func begin(options: Dictionary) -> void:
 	_summary_when_saved = false
 	_settings_button.show()
 	_finish_button.hide()
+	_pause_button.show()
+	_show_paused(false)
 	_workout = options.get("workout", {})
 	var on_its_own: bool = not _workout.is_empty() and not options.get("on_course", false)
 	_backdrop.visible = on_its_own
@@ -190,6 +193,13 @@ func _ready() -> void:
 	_overlay_button.add_theme_stylebox_override("normal", UiTheme.hud_button())
 	_overlay_button.pressed.connect(func() -> void: overlay_requested.emit(true))
 	_settings_button.add_sibling(_overlay_button)
+	_pause_button.text = tr("Pause")
+	_pause_button.tooltip_text = tr("Pause the ride: the clock and the trainer wait (P)")
+	_pause_button.focus_mode = Control.FOCUS_NONE
+	_pause_button.add_theme_stylebox_override("normal", UiTheme.hud_button())
+	_pause_button.pressed.connect(_toggle_pause)
+	_overlay_button.add_sibling(_pause_button)
+	_overlay_hud.pause_requested.connect(_toggle_pause)
 	_overlay_hud.hide()
 	_overlay_hud.leave_requested.connect(func() -> void: overlay_requested.emit(false))
 	_overlay_hud.zoom_requested.connect(overlay_zoom_requested.emit)
@@ -208,6 +218,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			overlay_zoom_requested.emit(1)
 		elif key.keycode in [KEY_MINUS, KEY_KP_SUBTRACT]:
 			overlay_zoom_requested.emit(-1)
+		elif key.keycode in [KEY_P, KEY_SPACE]:
+			_toggle_pause()
 		else:
 			return
 		get_viewport().set_input_as_handled()
@@ -217,6 +229,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		_torqa.shift(1 if key.keycode == KEY_UP else -1)
 	elif key.keycode == KEY_O and not _finished:
 		overlay_requested.emit(true)
+	elif key.keycode in [KEY_P, KEY_SPACE] and not _finished:
+		_toggle_pause()
 	elif key.keycode == KEY_C:
 		_cycle_camera()
 	elif key.keycode == KEY_S and not _finished:
@@ -386,6 +400,7 @@ func _on_finish_requested() -> void:
 func _on_abort_requested() -> void:
 	_torqa.abort_ride()
 	_finished = true
+	_pause_button.hide()
 	closed.emit()
 
 
@@ -647,6 +662,24 @@ func _cycle_camera() -> void:
 	_show_toast(tr("Camera: %s") % tr(_world.cycle_camera()))
 
 
+## Pauses the ride, or goes on with it: the clock, the road and the trainer wait (P).
+func _toggle_pause() -> void:
+	if _finished:
+		return
+	_show_paused(_torqa.set_paused(not _torqa.is_paused()))
+
+
+func _show_paused(paused: bool) -> void:
+	_pause_button.text = tr("Resume") if paused else tr("Pause")
+	_overlay_hud.show_paused(paused)
+	if paused:
+		_show_toast(tr("Paused"))
+		_toast_left = INF
+	elif _toast_left == INF:
+		_toast_left = 0.0
+		_toast.hide()
+
+
 func _show_toast(message: String) -> void:
 	_toast_label.text = message
 	# The overlay has no room for messages.
@@ -679,6 +712,7 @@ func _on_finish_pressed() -> void:
 
 func _finish_ride() -> void:
 	_finished = true
+	_pause_button.hide()
 	_settings_button.hide()
 	_torqa.finish_ride()
 	if not _saved:
@@ -690,6 +724,7 @@ func _finish_ride() -> void:
 
 func _on_ride_saved(path: String) -> void:
 	_finished = true
+	_pause_button.hide()
 	_saved = true
 	_saved_path = path
 	_settings_button.hide()
