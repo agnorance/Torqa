@@ -18,7 +18,7 @@ func _run() -> void:
 	_workout_editor()
 	_rider_drivetrain()
 	_shifter_buttons()
-	_course_cards()
+	await _course_cards()
 	_video_view()
 	_video_alignment()
 	_translations()
@@ -476,6 +476,20 @@ func _course_cards() -> void:
 	click.pressed = true
 	card.call("_gui_input", click)
 	_check(opened[0], "a click opens the course")
+	await process_frame
+	await process_frame
+	_check(card.name_tooltip().is_empty(), "a short name needs no tooltip")
+	var long_name: String = "Rennradfahrt - Alpenbrevet 2026 Gold, Andermatt und zurück"
+	var long_course: Dictionary = course.duplicate()
+	long_course["name"] = long_name
+	var long_card: CourseCard = CourseCard.new(long_course, false)
+	root.add_child(long_card)
+	await process_frame
+	await process_frame
+	_check(
+		long_card.name_tooltip() == long_name,
+		"a cut-off name shows in full on hover: %s" % long_card.name_tooltip()
+	)
 	_check(not _has_badge(card), "a GPX course has no video badge")
 	card.free()
 	course["video"] = "Gurten.MP4"

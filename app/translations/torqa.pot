@@ -327,7 +327,7 @@ msgstr ""
 msgid "Climbed"
 msgstr ""
 
-#: app/scenes/history_screen.gd:276 app/ui/course_card.gd:88
+#: app/scenes/history_screen.gd:276 app/ui/course_card.gd:106
 msgid "Climbing"
 msgstr ""
 
@@ -707,7 +707,7 @@ msgstr ""
 msgid "Larger (+)"
 msgstr ""
 
-#: app/ui/course_card.gd:87
+#: app/ui/course_card.gd:105
 msgid "Length"
 msgstr ""
 
@@ -1203,7 +1203,7 @@ msgstr ""
 msgid "Steady"
 msgstr ""
 
-#: app/ui/course_card.gd:89
+#: app/ui/course_card.gd:107
 msgid "Steepest"
 msgstr ""
 
@@ -1339,7 +1339,7 @@ msgstr ""
 msgid "Very light"
 msgstr ""
 
-#: app/ui/course_card.gd:47
+#: app/ui/course_card.gd:65
 msgid "Video"
 msgstr ""
 
