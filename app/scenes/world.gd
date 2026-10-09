@@ -233,6 +233,8 @@ var _railways: MeshInstance3D = MeshInstance3D.new()
 func bind(torqa: TorqaApp) -> void:
 	_torqa = torqa
 	_torqa.world_ready.connect(_on_world_ready)
+	# A switch of riders changes the avatar on the bike at once, in a world built already.
+	_torqa.profile_changed.connect(_apply_rider)
 
 
 ## Whether the free camera flies (its arrows move it).
@@ -465,13 +467,18 @@ func _process(delta: float) -> void:
 	_follow_ride(state, delta)
 
 
-func _on_world_ready(_info: Dictionary) -> void:
-	_clouds_settled = false
-	_find_low_ground()
-	# The rider's own avatar (R46); the ghost rides the same one.
+## The rider's own avatar (R46), on a new world and whenever the active rider changes; the
+## ghost rides the same one.
+func _apply_rider() -> void:
 	var avatar: String = _torqa.profile().get("avatar", RiderAvatar.RIDERS[0])
 	_avatar.rider = avatar
 	_ghost.rider = avatar
+
+
+func _on_world_ready(_info: Dictionary) -> void:
+	_clouds_settled = false
+	_find_low_ground()
+	_apply_rider()
 	for chunk: Node in _terrain.get_children():
 		chunk.queue_free()
 	_chunk_count = _torqa.world_chunk_count()

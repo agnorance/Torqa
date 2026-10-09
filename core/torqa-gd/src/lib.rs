@@ -145,6 +145,10 @@ impl TorqaApp {
     #[signal]
     fn remembered_missing(names: PackedStringArray);
 
+    /// The active rider changed: another one selected, or one saved or created.
+    #[signal]
+    fn profile_changed();
+
     /// Something went wrong.
     #[signal]
     fn failed(message: GString);
@@ -1208,7 +1212,11 @@ impl TorqaApp {
     #[func]
     #[allow(clippy::needless_pass_by_value)] // #[func] parameters are passed by value from Godot
     fn select_profile(&mut self, id: GString) -> bool {
-        self.command(|app| app.select_profile(&id.to_string()))
+        let selected = self.command(|app| app.select_profile(&id.to_string()));
+        if selected {
+            self.signals().profile_changed().emit();
+        }
+        selected
     }
 
     /// Saves a rider (a new one if `id` is empty) from a dictionary shaped like `profile()`
@@ -1278,7 +1286,10 @@ impl TorqaApp {
             return GString::new();
         };
         match app.save_profile(id.as_deref(), profile) {
-            Ok(id) => GString::from(id.as_str()),
+            Ok(id) => {
+                self.signals().profile_changed().emit();
+                GString::from(id.as_str())
+            }
             Err(error) => {
                 let message = error.to_string();
                 self.signals()

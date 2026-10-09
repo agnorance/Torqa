@@ -19,6 +19,7 @@ func _run() -> void:
 	_rider_drivetrain()
 	_shifter_buttons()
 	_course_cards()
+	await _rider_switch()
 	_video_view()
 	_video_alignment()
 	_translations()
@@ -518,6 +519,27 @@ func _check(condition: bool, what: String) -> void:
 	if not condition:
 		push_error("UI SMOKE TEST FAILED: " + what)
 		_failed = true
+
+
+## Switching riders changes the avatar on the bike at once, not only with the next world.
+func _rider_switch() -> void:
+	var main: Control = (load(MAIN_SCENE) as PackedScene).instantiate()
+	root.add_child(main)
+	await process_frame
+	var torqa: TorqaApp = main.get_node("Torqa")
+	var world: RideWorld = main.get_node("World")
+	var avatar: RiderAvatar = world.get("_avatar")
+	var profile: Dictionary = torqa.profile()
+	var profile_id: String = profile["id"]
+	var before: String = profile.get("avatar", "female")
+	var other: String = "male" if before != "male" else "female"
+	profile["avatar"] = other
+	var id: String = torqa.save_profile(profile_id, profile)
+	_check(not id.is_empty(), "the rider is saved")
+	_check(avatar.rider == other, "the rider on the bike follows the rider: %s" % avatar.rider)
+	profile["avatar"] = before
+	torqa.save_profile(profile_id, profile)
+	main.queue_free()
 
 
 ## The free camera turns with the mouse while Shift is held, and not without (#66).
