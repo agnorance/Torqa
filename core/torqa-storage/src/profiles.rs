@@ -53,6 +53,10 @@ struct ProfileFile {
     drivetrain: DrivetrainFile,
     chainring: u8,
     cog: u8,
+    /// Upper bounds of the power and heart-rate zones in percent of FTP and of the maximum
+    /// heart rate; the standard zones where missing or out of order.
+    power_zones_pct: Vec<f64>,
+    heart_rate_zones_pct: Vec<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -116,8 +120,15 @@ impl From<&Profile> for ProfileFile {
                 Drivetrain::SingleCog { cog, .. } => cog,
                 Drivetrain::Cassette => DEFAULT_COG,
             },
+            power_zones_pct: p.power_zones.iter().map(|b| b * 100.0).collect(),
+            heart_rate_zones_pct: p.heart_rate_zones.iter().map(|b| b * 100.0).collect(),
         }
     }
+}
+
+/// Percentages as shares.
+fn shares(percent: &[f64]) -> Vec<f64> {
+    percent.iter().map(|p| p / 100.0).collect()
 }
 
 impl From<ProfileFile> for Profile {
@@ -144,6 +155,8 @@ impl From<ProfileFile> for Profile {
                     cog: f.cog.max(1),
                 },
             },
+            power_zones: Profile::sane_power_zones(&shares(&f.power_zones_pct)),
+            heart_rate_zones: Profile::sane_heart_rate_zones(&shares(&f.heart_rate_zones_pct)),
         }
     }
 }
@@ -724,6 +737,8 @@ mod tests {
                 chainring: 46,
                 cog: 14,
             },
+            power_zones: [0.5, 0.7, 0.85, 1.0, 1.15, 1.4],
+            heart_rate_zones: [0.55, 0.65, 0.75, 0.85],
             ..Profile::default()
         };
         let anna = Profile {
