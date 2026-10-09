@@ -859,7 +859,7 @@ msgstr ""
 msgid "No rides yet. Finished rides appear here."
 msgstr ""
 
-#: app/scenes/start_page.gd:112 app/scenes/start_page.gd:121
+#: app/scenes/start_page.gd:120 app/scenes/start_page.gd:129
 msgid "No trainer connected — choose one under Devices & Settings."
 msgstr ""
 

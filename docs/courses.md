@@ -16,7 +16,8 @@ already, choose **Replace** to replace it or **Keep both**.
 
 ## Ride a course
 
-Click its card on the Courses tab, then **Ride**. No internet connection is needed.
+Click its card on the Courses tab, then **Ride**. No internet connection is needed. **← Courses**
+or a click on the Courses tab brings the gallery back.
 
 ## Share a course
 
