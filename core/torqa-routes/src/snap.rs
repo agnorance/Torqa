@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use torqa_osm::{Road, RoadClass, Structure};
+use torqa_osm::{Road, RoadClass, Structure, StructureKind};
 
 use crate::gpx::RawPoint;
 
@@ -43,6 +43,14 @@ const MAX_DETOUR: f64 = 2.5;
 /// its points there (sparse files have points 100 m apart; the detour limit keeps the way
 /// sensible).
 const JUNCTION_REACH_M: f64 = 150.0;
+/// A receiver that loses its fix in a tunnel records points wandering far from any road until
+/// it finds the sky again; the tunnel between the last point on a road and the next was ridden,
+/// not the wandering (#166). Points off road are taken for that where a tunnel joins the roads
+/// either side and they run at most this many times the way through it; a real detour off the
+/// map, from one tunnel mouth round to the other, is longer.
+const LOST_FIX_DETOUR: f64 = 3.0;
+/// A tunnel is followed through at most this many pieces of the map (`tunnel_way`).
+const TUNNEL_PIECES: usize = 6;
 /// Points of the finished line are at most this far apart...
 const STEP_M: f64 = 5.0;
 /// ...and it is smoothed so it bends like a road, no point moving further than this from where
@@ -153,15 +161,20 @@ pub(crate) fn to_roads(track: &[RawPoint], roads: &[Road]) -> Snapped {
         .collect();
     let network = Network::new(lines, roads);
     let matches = network.choose(&positions);
+    let kept = network.without_lost_fixes(&matches, &positions);
+    let mut used: Vec<usize> = matches.iter().flatten().map(|m| m.road).collect();
 
     let mut nodes: Vec<Node> = Vec::with_capacity(track.len() * 2);
-    for (i, point) in track.iter().enumerate() {
+    let mut previous: Option<usize> = None;
+    for &i in &kept {
+        let point = &track[i];
         let at = matches[i].map_or(positions[i], |m| m.at);
-        if i > 0
-            && let (Some(from), Some(to)) = (matches[i - 1], matches[i])
+        if let Some(p) = previous
+            && let (Some(from), Some(to)) = (matches[p], matches[i])
         {
-            network.connect(&mut nodes, from, to, (&track[i - 1], point));
+            network.connect((&mut nodes, &mut used), from, to, (&track[p], point));
         }
+        previous = Some(i);
         nodes.push(Node {
             at,
             anchor: at,
@@ -174,7 +187,6 @@ pub(crate) fn to_roads(track: &[RawPoint], roads: &[Road]) -> Snapped {
     straighten_excursions(&mut nodes);
     let nodes = smooth(&nodes);
 
-    let mut used: Vec<usize> = matches.iter().flatten().map(|m| m.road).collect();
     used.sort_unstable();
     used.dedup();
     Snapped {
@@ -204,12 +216,25 @@ pub(crate) fn to_roads(track: &[RawPoint], roads: &[Road]) -> Snapped {
 
 /// Where two roads meet, with the positions there on each.
 type Meeting = ((f64, f64), Match, Match);
+/// A way along roads as points, with the tunnel's road if it goes through one.
+type Way = (Vec<(f64, f64)>, Option<usize>);
+
+/// A way into a tunnel being followed through (`tunnel_way`): the piece of it reached, the
+/// points up to it, where they enter it, and the first piece entered.
+struct Entry {
+    tunnel: usize,
+    path: Vec<(f64, f64)>,
+    into: Match,
+    first: usize,
+}
 
 /// The roads, projected and indexed.
 struct Network<'a> {
     lines: Vec<Vec<(f64, f64)>>,
     roads: &'a [Road],
     index: HashMap<(i64, i64), Vec<(usize, usize)>>,
+    /// The roads in tunnels (`tunnel_way`).
+    tunnels: Vec<usize>,
 }
 
 impl<'a> Network<'a> {
@@ -227,10 +252,17 @@ impl<'a> Network<'a> {
                 }
             }
         }
+        let tunnels = roads
+            .iter()
+            .enumerate()
+            .filter(|(_, road)| road.structure == Some(StructureKind::Tunnel))
+            .map(|(index, _)| index)
+            .collect();
         Self {
             lines,
             roads,
             index,
+            tunnels,
         }
     }
 
@@ -415,10 +447,68 @@ impl<'a> Network<'a> {
             .min_by(|x, y| distance(x.at, point).total_cmp(&distance(y.at, point)))
     }
 
-    /// The way from `from` to `to` (the positions on roads of two consecutive points `ends`):
-    /// along their road's bends, or round the junction where the track changes road.
-    fn connect(&self, nodes: &mut Vec<Node>, from: Match, to: Match, ends: (&RawPoint, &RawPoint)) {
+    /// The points of the track to keep: all but runs of points off every road between two
+    /// points on roads that connect, where the road's way is about as long as the run
+    /// (`LOST_FIX_DETOUR`): a receiver that lost its fix in a tunnel and found it again beyond
+    /// (#166). The road between them is then followed (`connect`).
+    fn without_lost_fixes(
+        &self,
+        matches: &[Option<Match>],
+        positions: &[(f64, f64)],
+    ) -> Vec<usize> {
+        let mut kept = Vec::with_capacity(matches.len());
+        let mut i = 0;
+        while i < matches.len() {
+            if matches[i].is_some() {
+                kept.push(i);
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < matches.len() && matches[i].is_none() {
+                i += 1;
+            }
+            if !self.lost_fix(matches, positions, start, i) {
+                kept.extend(start..i);
+            }
+        }
+        kept
+    }
+
+    /// Whether the points `start..end` off every road are a fix lost between the points on
+    /// roads either side of them (see [`Network::without_lost_fixes`]).
+    fn lost_fix(
+        &self,
+        matches: &[Option<Match>],
+        positions: &[(f64, f64)],
+        start: usize,
+        end: usize,
+    ) -> bool {
+        if start == 0 || end >= matches.len() {
+            return false;
+        }
+        let (Some(from), Some(to)) = (matches[start - 1], matches[end]) else {
+            return false;
+        };
+        let Some((way, tunnel)) = self.way(from, to) else {
+            return false;
+        };
+        // Only a tunnel takes the sky away; elsewhere the points off road were ridden.
+        let in_tunnel = |road: usize| self.roads[road].structure == Some(StructureKind::Tunnel);
+        if tunnel.is_none() && !in_tunnel(from.road) && !in_tunnel(to.road) {
+            return false;
+        }
+        let recorded = path_length(&positions[start - 1..=end]);
+        recorded <= path_length(&way) * LOST_FIX_DETOUR
+    }
+
+    /// The way along roads from `from` to `to`: along their road's bends, round the junction
+    /// where the track changes road, through a tunnel joining their roads (`tunnel_way`, with
+    /// its road), or straight where none of that holds. `None` where the way would be a detour
+    /// (`MAX_DETOUR`): a loop of the road between the two is not what was ridden.
+    fn way(&self, from: Match, to: Match) -> Option<Way> {
         let mut path = vec![from.at];
+        let mut tunnel = None;
         if from.road == to.road {
             path.extend(self.bends(from, to));
         } else if let Some((junction, on_from, on_to)) = self.meet(from.road, to.road, Some(to.at))
@@ -428,13 +518,96 @@ impl<'a> Network<'a> {
             path.extend(self.bends(from, on_from));
             path.push(junction);
             path.extend(self.bends(on_to, to));
+        } else if let Some((through, road)) = self.tunnel_way(from, to) {
+            path.extend(through);
+            tunnel = Some(road);
         }
         path.push(to.at);
+        (path_length(&path) <= distance(from.at, to.at).max(1.0) * MAX_DETOUR)
+            .then_some((path, tunnel))
+    }
+
+    /// The way from `from` to `to` through a tunnel joining their roads: the points between
+    /// the two, and the tunnel's road where the way leaves `from`'s. The map splits a way where
+    /// it enters a tunnel, and at tile borders, so the tunnel may be several roads meeting end
+    /// to end (`TUNNEL_PIECES` at most); the shortest way where several lead through.
+    fn tunnel_way(&self, from: Match, to: Match) -> Option<(Vec<(f64, f64)>, usize)> {
+        let mut best: Option<(f64, Way)> = None;
+        // Ways into the tunnels so far: the tunnel, the points up to it and where they enter it.
+        let mut frontier: Vec<Entry> = Vec::new();
+        for &tunnel in &self.tunnels {
+            if tunnel == from.road || tunnel == to.road {
+                continue;
+            }
+            if let Some((entrance, on_from, into)) = self.meet(from.road, tunnel, Some(from.at)) {
+                let mut path = self.bends(from, on_from);
+                path.push(entrance);
+                frontier.push(Entry {
+                    tunnel,
+                    path,
+                    into,
+                    first: tunnel,
+                });
+            }
+        }
+        let mut visited: Vec<usize> = frontier.iter().map(|e| e.tunnel).collect();
+        for _ in 0..TUNNEL_PIECES {
+            let mut next = Vec::new();
+            for entry in frontier {
+                if let Some((exit, out_of, on_to)) = self.meet(entry.tunnel, to.road, Some(to.at)) {
+                    let mut through = entry.path.clone();
+                    through.extend(self.bends(entry.into, out_of));
+                    through.push(exit);
+                    through.extend(self.bends(on_to, to));
+                    let length = path_length(&through);
+                    if best.as_ref().is_none_or(|b| length < b.0) {
+                        best = Some((length, (through, Some(entry.first))));
+                    }
+                    continue;
+                }
+                for &other in &self.tunnels {
+                    if visited.contains(&other) || other == to.road {
+                        continue;
+                    }
+                    if let Some((joint, out_of, into)) = self.meet(entry.tunnel, other, Some(to.at))
+                    {
+                        let mut path = entry.path.clone();
+                        path.extend(self.bends(entry.into, out_of));
+                        path.push(joint);
+                        visited.push(other);
+                        next.push(Entry {
+                            tunnel: other,
+                            path,
+                            into,
+                            first: entry.first,
+                        });
+                    }
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            frontier = next;
+        }
+        best.and_then(|(_, (through, tunnel))| tunnel.map(|t| (through, t)))
+    }
+
+    /// The way from `from` to `to` (the positions on roads of two consecutive points `ends`)
+    /// as [`Network::way`] gives it, as points of the line; a tunnel taken joins the roads
+    /// `used`, so its tunnel comes with it.
+    fn connect(
+        &self,
+        (nodes, used): (&mut Vec<Node>, &mut Vec<usize>),
+        from: Match,
+        to: Match,
+        ends: (&RawPoint, &RawPoint),
+    ) {
+        let Some((path, tunnel)) = self.way(from, to) else {
+            return;
+        };
+        used.extend(tunnel);
         let lengths: Vec<f64> = path.windows(2).map(|w| distance(w[0], w[1])).collect();
         let total: f64 = lengths.iter().sum();
-        if total > distance(from.at, to.at).max(1.0) * MAX_DETOUR {
-            return;
-        }
         let mut done = 0.0;
         for (point, length) in path[1..path.len() - 1].iter().zip(&lengths) {
             done += length;
@@ -464,6 +637,10 @@ impl<'a> Network<'a> {
                 .collect()
         }
     }
+}
+
+fn path_length(path: &[(f64, f64)]) -> f64 {
+    path.windows(2).map(|w| distance(w[0], w[1])).sum()
 }
 
 /// Direction of travel at point `i` (unit), from its neighbours; `None` where they coincide.
@@ -656,8 +833,19 @@ mod tests {
         }
     }
 
+    fn point2((x, y): (f64, f64)) -> RawPoint {
+        point(x, y)
+    }
+
     fn road(points: &[(f64, f64)]) -> Road {
         road_of(RoadClass::Street, points)
+    }
+
+    fn tunnel(points: &[(f64, f64)]) -> Road {
+        Road {
+            structure: Some(StructureKind::Tunnel),
+            ..road(points)
+        }
     }
 
     fn road_of(class: RoadClass, points: &[(f64, f64)]) -> Road {
@@ -736,6 +924,70 @@ mod tests {
         for (x, y) in &snapped {
             assert!((x.hypot(*y) - 100.0).abs() < 0.5, "off the road: {x}, {y}");
         }
+    }
+
+    #[test]
+    fn a_fix_lost_in_a_tunnel_follows_the_road_through_it() {
+        // #166: a road bending through a hill, a quarter circle of 300 m radius, in a tunnel
+        // from 10° to 80° (the map splits the way at the tunnel's mouths); the receiver loses
+        // its fix inside and records three points wandering 150 m off until it is out again.
+        let arc = |degrees: f64| {
+            let r = degrees.to_radians();
+            (300.0 * r.cos(), 300.0 * r.sin())
+        };
+        let every_5 = |from: i32, to: i32| -> Vec<(f64, f64)> {
+            (from..=to).map(|i| arc(f64::from(i) * 5.0)).collect()
+        };
+        let roads = [
+            road(&every_5(0, 2)),
+            tunnel(&every_5(2, 16)),
+            road(&every_5(16, 18)),
+        ];
+        let mut track: Vec<RawPoint> = (0..=2).map(|i| point2(arc(f64::from(i) * 5.0))).collect();
+        for degrees in [25.0, 45.0, 65.0] {
+            let (x, y) = arc(degrees);
+            let r = degrees.to_radians();
+            track.push(point(x + 150.0 * r.cos(), y + 150.0 * r.sin()));
+        }
+        track.extend((16..=18).map(|i| point2(arc(f64::from(i) * 5.0))));
+
+        let snapped = to_roads(&track, &roads);
+        let line = xy(&snapped.track);
+
+        // The wandering is gone, the line follows the road's bend through the hill...
+        let furthest = line.iter().map(|(x, y)| x.hypot(*y)).fold(0.0, f64::max);
+        assert!(furthest < 310.0, "the line wanders {furthest} m out");
+        for (x, y) in &line {
+            assert!((x.hypot(*y) - 300.0).abs() < 2.5, "off the road: {x}, {y}");
+        }
+        // ...as long as the road, not the chords between the wandering points...
+        assert!((length(&line) - std::f64::consts::FRAC_PI_2 * 300.0).abs() < 5.0);
+        // ...and the tunnel ridden comes with it.
+        assert_eq!(snapped.structures.len(), 1, "{:?}", snapped.structures);
+    }
+
+    #[test]
+    fn a_real_detour_off_the_map_is_kept() {
+        // Leaving the road at a tunnel's mouth for a loop off the map four times as long as
+        // the tunnel, back to its other mouth: ridden, not a fix lost.
+        let roads = [
+            road(&[(0.0, -100.0), (0.0, 0.0)]),
+            tunnel(&[(0.0, 0.0), (0.0, 400.0)]),
+            road(&[(0.0, 400.0), (0.0, 500.0)]),
+        ];
+        let mut track: Vec<RawPoint> = vec![point(0.0, -50.0), point(0.0, 0.0)];
+        for i in 1..=8 {
+            let r = f64::from(i) * std::f64::consts::PI / 9.0;
+            track.push(point(500.0 * r.sin(), 200.0 - 500.0 * r.cos()));
+        }
+        track.extend([point(0.0, 400.0), point(0.0, 450.0)]);
+
+        let snapped = xy(&to_roads(&track, &roads).track);
+
+        assert!(
+            snapped.iter().any(|(x, _)| *x > 400.0),
+            "the detour was cut: {snapped:?}"
+        );
     }
 
     #[test]
