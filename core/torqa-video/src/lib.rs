@@ -590,5 +590,81 @@ pub(crate) fn f64_from(value: i64) -> f64 {
     value as f64
 }
 
+/// How a video keeps up on this machine, played against the wall clock as a ride at 1×
+/// does; from [`benchmark`], for `torqa-cli video`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Benchmark {
+    /// The video.
+    pub info: VideoInfo,
+    /// How long the clock ran.
+    pub played: Duration,
+    /// Frames handed out meanwhile.
+    pub delivered: u32,
+    /// The longest wait between two frames.
+    pub longest_wait: Duration,
+    /// The median wait between two frames.
+    pub median_wait: Duration,
+    /// Frames decoded per second with no clock to wait for.
+    pub straight_per_second: f64,
+}
+
+impl Benchmark {
+    /// Frames handed out per second of the clock.
+    #[must_use]
+    pub fn delivered_per_second(&self) -> f64 {
+        f64::from(self.delivered) / self.played.as_secs_f64().max(1e-9)
+    }
+
+    /// Whether a ride along this video would run smoothly here: frames at the video's own
+    /// rate, or 24 a second at least, and never a wait of half a second.
+    #[must_use]
+    pub fn keeps_up(&self) -> bool {
+        let wanted = self.info.frame_rate.min(24.0) * 0.9;
+        self.delivered_per_second() >= wanted && self.longest_wait < Duration::from_millis(500)
+    }
+}
+
+/// Plays the video at `path` against the wall clock for `seconds`, asking for the frame at
+/// the clock's time as a ride at 1× does, then decodes straight for up to five seconds.
+///
+/// # Errors
+/// [`VideoError`] if the file cannot be opened or decoded.
+pub fn benchmark(path: &Path, seconds: u64) -> Result<Benchmark, VideoError> {
+    let mut video = Video::open(path)?;
+    let info = video.info();
+    let played = Duration::from_secs(seconds).min(info.duration);
+    let start = std::time::Instant::now();
+    let (mut delivered, mut last) = (0, None);
+    let mut waits: Vec<Duration> = Vec::new();
+    let mut previous = start;
+    while start.elapsed() < played {
+        let time = video.frame_at(start.elapsed())?.time;
+        if last != Some(time) {
+            last = Some(time);
+            delivered += 1;
+            waits.push(previous.elapsed());
+            previous = std::time::Instant::now();
+        }
+    }
+    waits.sort();
+    video.seek(Duration::ZERO)?;
+    let start = std::time::Instant::now();
+    let mut frames = 0;
+    while video.decode_next()?.is_some() {
+        frames += 1;
+        if start.elapsed() > Duration::from_secs(5) {
+            break;
+        }
+    }
+    Ok(Benchmark {
+        info,
+        played,
+        delivered,
+        longest_wait: waits.last().copied().unwrap_or_default(),
+        median_wait: waits.get(waits.len() / 2).copied().unwrap_or_default(),
+        straight_per_second: f64::from(frames) / start.elapsed().as_secs_f64().max(1e-9),
+    })
+}
+
 #[cfg(test)]
 mod tests;
