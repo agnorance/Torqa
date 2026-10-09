@@ -8,6 +8,8 @@ extends Control
 signal leave_requested
 ## The rider wants the overlay `steps` sizes larger, or smaller if negative (#124).
 signal zoom_requested(steps: int)
+## The rider wants the ride paused, or to go on with it.
+signal pause_requested
 
 ## The HUD keeps the width it has in the ride screen.
 const HUD_WIDTH: float = 260.0
@@ -18,6 +20,8 @@ var _bar: PanelContainer = PanelContainer.new()
 var _hud: HudPanel = HudPanel.new()
 var _workout: WorkoutPanel = WorkoutPanel.new()
 var _grip: Control = Control.new()
+
+var _pause: Button
 
 
 func _init() -> void:
@@ -38,6 +42,9 @@ func _init() -> void:
 	var larger: Button = _bar_button("A+", tr("Larger (+)"))
 	larger.pressed.connect(func() -> void: zoom_requested.emit(1))
 	bar.add_child(larger)
+	_pause = _bar_button(tr("Pause"), tr("Pause the ride (P)"))
+	_pause.pressed.connect(func() -> void: pause_requested.emit())
+	bar.add_child(_pause)
 	var full: Button = _bar_button(tr("Full view"), tr("Back to the whole ride screen (O or Esc)"))
 	full.pressed.connect(func() -> void: leave_requested.emit())
 	bar.add_child(full)
@@ -60,6 +67,11 @@ func _init() -> void:
 	_grip.gui_input.connect(_on_grip_input)
 	_grip.draw.connect(_draw_grip)
 	_box.add_child(_grip)
+
+
+## Shows whether the ride is paused on the pause button.
+func show_paused(paused: bool) -> void:
+	_pause.text = tr("Resume") if paused else tr("Pause")
 
 
 ## Prepares the overlay for the ride: the rider's HUD `layout` and the `workout` being ridden
