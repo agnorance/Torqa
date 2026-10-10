@@ -23,6 +23,7 @@ func _run() -> void:
 	await _courses_tab()
 	await _rider_switch()
 	_ride_bar()
+	await _summary_icons()
 	_video_view()
 	_video_alignment()
 	_translations()
@@ -611,6 +612,22 @@ func _ride_bar() -> void:
 	var finish: Button = bar.get("_finish")
 	_check(finish.visible, "the way back shows")
 	bar.free()
+
+
+## The rename and delete controls of a ride are icons with tooltips (#190).
+func _summary_icons() -> void:
+	var title: EditableTitle = EditableTitle.new("Rename it")
+	root.add_child(title)
+	var pencil: Button = title.get("_button")
+	_check(pencil.icon != null and pencil.tooltip_text == "Rename it", "a pencil to rename")
+	title.free()
+	var main: Control = (load(MAIN_SCENE) as PackedScene).instantiate()
+	root.add_child(main)
+	await process_frame
+	var history: Control = main.get_node("HistoryScreen")
+	var bin: Button = history.get("_delete_button")
+	_check(bin.icon != null and not bin.tooltip_text.is_empty(), "a bin to delete, with a tooltip")
+	main.free()
 
 
 ## The free camera turns with the mouse while Shift is held, and not without (#66).

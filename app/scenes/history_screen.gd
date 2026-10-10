@@ -140,9 +140,12 @@ func _ready() -> void:
 	_subtitle.add_theme_color_override("font_color", UiTheme.MUTED)
 	titles.add_child(_subtitle)
 	title_row.add_child(titles)
-	_delete_button.text = tr("Delete ride")
+	_delete_button.icon = UiIcons.texture("bin")
+	_delete_button.tooltip_text = tr("Delete ride")
+	_delete_button.focus_mode = Control.FOCUS_NONE
 	_delete_button.pressed.connect(_confirm_delete.popup_centered)
-	title_row.add_child(_delete_button)
+	# Beside the pencil, on the title's line, so the two align.
+	_title.add_action(_delete_button)
 	_detail.add_child(title_row)
 	_confirm_delete.title = tr("Delete ride?")
 	_confirm_delete.dialog_text = tr("The ride and its FIT file are deleted.")
