@@ -22,7 +22,7 @@ if [ -n "$errors" ]; then
 fi
 status=0
 # One Godot run per route: each loads its route and rides it to the views on it.
-routes="gurtenstrasse bielersee kirchenfeldbruecke"
+routes="gurtenstrasse bielersee kirchenfeldbruecke oberalp"
 if [ -n "${GPX:-}" ]; then
     routes="$(realpath "$GPX")"
 fi

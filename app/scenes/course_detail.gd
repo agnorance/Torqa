@@ -61,10 +61,15 @@ func open(course: Dictionary) -> void:
 	var track: PackedVector2Array = course.get("track", PackedVector2Array())
 	var profile: PackedVector2Array = course.get("profile", PackedVector2Array())
 	_path_card.set_track(track)
+	_path_card.set_map(_torqa.course_preview(_path))
 	_profile.set_profile(profile)
 	_profile.set_climbs([])
 	_records.text = ""
 	_status.text = ""
+	# The rider's own default difficulty (#175); the ride's settings may change it later.
+	var rider: Dictionary = _torqa.profile()
+	var difficulty: float = rider.get("default_difficulty_pct", 50.0)
+	_options.set_difficulty(difficulty)
 	for button: Button in [_add_video_button, _align_button, _remove_video_button]:
 		button.hide()
 	_loading_bar.hide()
@@ -196,8 +201,9 @@ func _init() -> void:
 	_video_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
 	_video_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	var videos: PackedStringArray = PackedStringArray()
+	# A Tacx RLV brings its video and the camera's speeds along it.
 	for extension: String in TorqaApp.video_extensions():
-		if not extension in ["xml", "rlv"]:
+		if extension != "xml":
 			videos.append("*." + extension)
 	_video_dialog.filters = PackedStringArray([", ".join(videos) + " ; " + tr("Videos")])
 	_video_dialog.use_native_dialog = true
@@ -278,6 +284,19 @@ func _on_world_ready(_info: Dictionary) -> void:
 	_status.text = ""
 	_ride_button.disabled = false
 	ready_to_ride.emit()
+	_keep_preview()
+
+
+## A course from before map pictures gets its own from the world just built (#192).
+func _keep_preview() -> void:
+	if _path.is_empty() or not _torqa.course_preview(_path).is_empty():
+		return
+	var png: PackedByteArray = await MapPreview.capture(
+		get_tree(), _torqa.minimap_mesh(), _torqa.track(2000)
+	)
+	if not png.is_empty():
+		_torqa.set_course_preview(_path, png)
+		_path_card.set_map(png)
 
 
 func _on_failed(message: String) -> void:
@@ -325,8 +344,12 @@ func _on_video_chosen(path: String) -> void:
 	if probe.is_empty():
 		return
 	_adding_video = path
+	var video: String = probe["video"]
 	var duration_s: float = probe["duration_s"]
-	_edit_alignment(path, duration_s, PackedVector2Array())
+	var start_s: float = probe["start_s"]
+	var end_s: float = probe["end_s"]
+	var marks: PackedVector2Array = PackedVector2Array([Vector2(0.0, start_s), Vector2(0.0, end_s)])
+	_edit_alignment(video, duration_s, marks)
 
 
 func _open_alignment() -> void:

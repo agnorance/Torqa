@@ -7,7 +7,7 @@
 //! noted where it is used.
 #![allow(unsafe_code)] // FFI to rav1d's dav1d API, the only interface the crate publishes
 
-use std::io::ErrorKind;
+use std::ffi::c_int;
 use std::mem::MaybeUninit;
 use std::ptr::NonNull;
 
@@ -45,12 +45,37 @@ pub(crate) struct Picture {
     picture: Dav1dPicture,
 }
 
-fn check(result: Dav1dResult) -> Result<(), ErrorKind> {
+/// What `rav1d` answered besides success: its queue is full or empty for now, or it failed.
+#[derive(Debug, PartialEq, Eq)]
+enum Answer {
+    TryAgain,
+    Failed,
+}
+
+/// `rav1d` answers like `dav1d`: 0, or an errno of the C library negated, which it does not
+/// name. On Unix the platform reads such a number back; on Windows it would read a Windows
+/// error code, another numbering altogether, under which "try again" was taken for a failure
+/// and every AV1 video stalled there.
+fn check(result: Dav1dResult) -> Result<(), Answer> {
     if result.0 >= 0 {
         Ok(())
+    } else if try_again(-result.0) {
+        Err(Answer::TryAgain)
     } else {
-        Err(std::io::Error::from_raw_os_error(-result.0).kind())
+        Err(Answer::Failed)
     }
+}
+
+#[cfg(windows)]
+fn try_again(errno: c_int) -> bool {
+    // EAGAIN of Microsoft's C library, the one `rav1d` gets on Windows.
+    const EAGAIN: c_int = 11;
+    errno == EAGAIN
+}
+
+#[cfg(not(windows))]
+fn try_again(errno: c_int) -> bool {
+    std::io::Error::from_raw_os_error(errno).kind() == std::io::ErrorKind::WouldBlock
 }
 
 fn failed(what: &str) -> VideoError {
@@ -113,7 +138,7 @@ impl Av1 {
                 Ok(()) if data.sz == 0 => break Ok(()),
                 Ok(()) => {}
                 // Its queue is full: take pictures out, then send the rest.
-                Err(ErrorKind::WouldBlock) => {
+                Err(Answer::TryAgain) => {
                     if let Err(error) = self.pictures(out) {
                         break Err(error);
                     }
@@ -138,7 +163,7 @@ impl Av1 {
                 unsafe { dav1d_get_picture(self.context, Some(NonNull::from(&mut picture))) };
             match check(result) {
                 Ok(()) => out.push(Picture { picture }),
-                Err(ErrorKind::WouldBlock) => return Ok(()),
+                Err(Answer::TryAgain) => return Ok(()),
                 Err(_) => return Err(failed("cannot decode this AV1 video")),
             }
         }
@@ -251,4 +276,19 @@ pub(crate) fn size(parameters: &ffmpeg::codec::Parameters) -> (u32, u32) {
         u32::try_from(raw.width).unwrap_or(0),
         u32::try_from(raw.height).unwrap_or(0),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn try_again_is_read_as_rav1d_means_it() {
+        // The C library's EAGAIN: 35 on macOS, 11 on Linux and in Microsoft's; read as a
+        // Windows error code, 11 would mean something else.
+        let eagain = if cfg!(target_os = "macos") { 35 } else { 11 };
+        assert_eq!(check(Dav1dResult(-eagain)), Err(Answer::TryAgain));
+        assert_eq!(check(Dav1dResult(0)), Ok(()));
+        assert_eq!(check(Dav1dResult(-22)), Err(Answer::Failed));
+    }
 }

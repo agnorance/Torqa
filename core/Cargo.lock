@@ -2409,6 +2409,7 @@ dependencies = [
  "torqa-session",
  "torqa-storage",
  "torqa-terrain",
+ "torqa-video",
  "torqa-workouts",
  "torqa-world",
  "tracing-subscriber",

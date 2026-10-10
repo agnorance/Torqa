@@ -8,6 +8,8 @@ extends Control
 signal leave_requested
 ## The rider wants the overlay `steps` sizes larger, or smaller if negative (#124).
 signal zoom_requested(steps: int)
+## The rider wants the ride paused, or to go on with it.
+signal pause_requested
 
 ## The HUD keeps the width it has in the ride screen.
 const HUD_WIDTH: float = 260.0
@@ -19,10 +21,18 @@ var _hud: HudPanel = HudPanel.new()
 var _workout: WorkoutPanel = WorkoutPanel.new()
 var _grip: Control = Control.new()
 
+var _pause: Button
+
 
 func _init() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# The window is see-through between the panels; the panels themselves are opaque here.
+	# Over the 3D scene their translucency only tints the view, but over another window its
+	# text and icons showed through the figures.
+	var opaque: Theme = Theme.new()
+	opaque.set_stylebox("panel", "PanelContainer", UiTheme.panel(1.0))
+	theme = opaque
 	_box.add_theme_constant_override("separation", 6)
 	_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_box)
@@ -38,6 +48,9 @@ func _init() -> void:
 	var larger: Button = _bar_button("A+", tr("Larger (+)"))
 	larger.pressed.connect(func() -> void: zoom_requested.emit(1))
 	bar.add_child(larger)
+	_pause = _bar_button(tr("Pause"), tr("Pause the ride (P)"))
+	_pause.pressed.connect(func() -> void: pause_requested.emit())
+	bar.add_child(_pause)
 	var full: Button = _bar_button(tr("Full view"), tr("Back to the whole ride screen (O or Esc)"))
 	full.pressed.connect(func() -> void: leave_requested.emit())
 	bar.add_child(full)
@@ -60,6 +73,11 @@ func _init() -> void:
 	_grip.gui_input.connect(_on_grip_input)
 	_grip.draw.connect(_draw_grip)
 	_box.add_child(_grip)
+
+
+## Shows whether the ride is paused on the pause button.
+func show_paused(paused: bool) -> void:
+	_pause.text = tr("Resume") if paused else tr("Pause")
 
 
 ## Prepares the overlay for the ride: the rider's HUD `layout` and the `workout` being ridden
@@ -127,7 +145,7 @@ func _on_grip_input(event: InputEvent) -> void:
 
 func _draw_grip() -> void:
 	# On its own backing: over a video, bare lines would vanish.
-	_grip.draw_rect(Rect2(Vector2.ZERO, _grip.size), UiTheme.PANEL)
+	_grip.draw_rect(Rect2(Vector2.ZERO, _grip.size), Color(UiTheme.PANEL, 1.0))
 	var color: Color = UiTheme.MUTED
 	for i: int in range(3):
 		var inset: float = 3.0 + i * 4.0

@@ -18,6 +18,7 @@ var _rider_mass: SpinBox = _spin(30.0, 200.0, 0.5, " kg")
 var _bike_mass: SpinBox = _spin(3.0, 40.0, 0.1, " kg")
 var _ftp: SpinBox = _spin(50.0, 600.0, 1.0, " W")
 var _max_heart_rate: SpinBox = _spin(100.0, 230.0, 1.0, " bpm")
+var _difficulty: SpinBox = _spin(0.0, 100.0, 5.0, " %")
 var _units: OptionButton = OptionButton.new()
 var _language: OptionButton = OptionButton.new()
 var _avatar: OptionButton = OptionButton.new()
@@ -27,6 +28,8 @@ var _chainring: SpinBox = _spin(20.0, 60.0, 1.0, " T")
 var _cog: SpinBox = _spin(9.0, 36.0, 1.0, " T")
 var _teeth_rows: Array[Control] = []
 var _hud: HudEditor = HudEditor.new()
+var _badge_slot: HBoxContainer = HBoxContainer.new()
+var _zones: ZonesEditor = ZonesEditor.new()
 
 
 func _ready() -> void:
@@ -35,8 +38,22 @@ func _ready() -> void:
 	ok_button_text = tr("Save")
 	min_size = Vector2i(720, 460)
 	var tabs: TabContainer = TabContainer.new()
+	# The rider as a heading, an initial in a badge beside the name, then the figures in a
+	# card (#191).
+	var page: VBoxContainer = VBoxContainer.new()
+	page.name = tr("Profile")
+	page.add_theme_constant_override("separation", 16)
+	var header: HBoxContainer = HBoxContainer.new()
+	header.add_theme_constant_override("separation", 12)
+	_badge_slot.add_child(UiTheme.initial("", 48))
+	header.add_child(_badge_slot)
+	_name_edit.placeholder_text = tr("Name")
+	_name_edit.add_theme_font_size_override("font_size", 22)
+	_name_edit.text_changed.connect(_show_initial)
+	header.add_child(_name_edit)
+	page.add_child(header)
+	var card: PanelContainer = PanelContainer.new()
 	var grid: GridContainer = GridContainer.new()
-	grid.name = tr("Profile")
 	grid.columns = 2
 	grid.add_theme_constant_override("h_separation", 24)
 	grid.add_theme_constant_override("v_separation", 12)
@@ -48,6 +65,7 @@ func _ready() -> void:
 		_bike_mass,
 		_ftp,
 		_max_heart_rate,
+		_difficulty,
 		_units,
 		_language,
 		_avatar,
@@ -76,11 +94,11 @@ func _ready() -> void:
 		_language.add_item(tr(language_name) if code.is_empty() else language_name)
 	# i18n-begin
 	for row: Array in [
-		["Name", _name_edit],
 		["Weight", _rider_mass],
 		["Bike weight", _bike_mass],
 		["FTP", _ftp],
 		["Max heart rate", _max_heart_rate],
+		["Trainer difficulty", _difficulty],
 		["Units", _units],
 		["Language", _language],
 		["Rider on the bike", _avatar],
@@ -96,10 +114,18 @@ func _ready() -> void:
 		grid.add_child(field)
 		if field in [_chainring, _cog]:
 			_teeth_rows.append_array([caption, field])
-	tabs.add_child(grid)
+	card.add_child(grid)
+	page.add_child(card)
+	tabs.add_child(page)
+	_zones.name = tr("Zones")
+	tabs.add_child(_zones)
 	_hud.name = tr("HUD")
 	tabs.add_child(_hud)
 	add_child(tabs)
+	for base: SpinBox in [_ftp, _max_heart_rate]:
+		base.value_changed.connect(
+			func(_value: float) -> void: _zones.set_bases(_ftp.value, _max_heart_rate.value)
+		)
 	_units.item_selected.connect(
 		func(index: int) -> void: _hud.edit(_hud.layout(), UNITS[index] == "imperial")
 	)
@@ -111,10 +137,12 @@ func _ready() -> void:
 func edit(profile: Dictionary, hud_layout: PackedStringArray) -> void:
 	_id = profile.get("id", "")
 	_name_edit.text = profile.get("name", "")
+	_show_initial(_name_edit.text)
 	_rider_mass.value = profile.get("rider_mass_kg", 75.0)
 	_bike_mass.value = profile.get("bike_mass_kg", 8.0)
 	_ftp.value = profile.get("ftp_w", 200.0)
 	_max_heart_rate.value = profile.get("max_heart_rate_bpm", 185.0)
+	_difficulty.value = profile.get("default_difficulty_pct", 50.0)
 	_units.select(maxi(UNITS.find(profile.get("units", "metric")), 0))
 	_language.select(0)
 	for i: int in range(LANGUAGES.size()):
@@ -127,6 +155,11 @@ func edit(profile: Dictionary, hud_layout: PackedStringArray) -> void:
 	_chainring.value = profile.get("chainring", 50)
 	_cog.value = profile.get("cog", 14)
 	_show_teeth()
+	var power_zones: PackedFloat64Array = profile.get("power_zones_pct", ZonesEditor.DEFAULT_POWER)
+	var heart_zones: PackedFloat64Array = profile.get(
+		"heart_rate_zones_pct", ZonesEditor.DEFAULT_HEART
+	)
+	_zones.edit(power_zones, heart_zones, _ftp.value, _max_heart_rate.value)
 	_hud.edit(hud_layout, UNITS[_units.selected] == "imperial")
 	title = tr("New rider") if _id.is_empty() else tr("Rider settings")
 	popup_centered(Vector2i(960, 600))
@@ -145,16 +178,25 @@ func _on_confirmed() -> void:
 				"bike_mass_kg": _bike_mass.value,
 				"ftp_w": _ftp.value,
 				"max_heart_rate_bpm": _max_heart_rate.value,
+				"default_difficulty_pct": _difficulty.value,
 				"units": UNITS[_units.selected],
 				"language": LANGUAGES[_language.selected][0],
 				"avatar": RiderAvatar.RIDERS[_avatar.selected],
 				"drivetrain": DRIVETRAINS[_drivetrain.selected],
 				"chainring": _chainring.value,
 				"cog": _cog.value,
+				"power_zones_pct": _zones.power_pct(),
+				"heart_rate_zones_pct": _zones.heart_pct(),
 			},
 			_hud.layout()
 		)
 	)
+
+
+func _show_initial(rider_name: String) -> void:
+	for child: Node in _badge_slot.get_children():
+		child.queue_free()
+	_badge_slot.add_child(UiTheme.initial(rider_name, 48))
 
 
 func _show_teeth() -> void:

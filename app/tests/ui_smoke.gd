@@ -18,7 +18,14 @@ func _run() -> void:
 	_workout_editor()
 	_rider_drivetrain()
 	_shifter_buttons()
+	await _course_cards()
 	_course_cards()
+	await _courses_tab()
+	await _rider_switch()
+	_ride_bar()
+	await _summary_icons()
+	_profile_icons()
+	await _map_preview()
 	_video_view()
 	_video_alignment()
 	_translations()
@@ -332,8 +339,11 @@ func _rider_drivetrain() -> void:
 		{"id": "r", "name": "R", "drivetrain": "single_cog", "chainring": 46, "cog": 14},
 		PackedStringArray(["power"])
 	)
-	var spins: Array[Node] = dialog.find_children("*", "SpinBox", true, false)
-	var cog: SpinBox = spins[spins.size() - 1]
+	# The cog is the last of the teeth fields; the zones tab has spin boxes of its own.
+	var teeth: Array[Node] = dialog.find_children("*", "SpinBox", true, false).filter(
+		func(node: Node) -> bool: return (node as SpinBox).suffix == " T"
+	)
+	var cog: SpinBox = teeth[teeth.size() - 1]
 	_check(cog.visible, "chainring and cog for a single cog")
 	dialog.confirmed.emit()
 	var saved: Dictionary = confirmed[0]
@@ -476,6 +486,20 @@ func _course_cards() -> void:
 	click.pressed = true
 	card.call("_gui_input", click)
 	_check(opened[0], "a click opens the course")
+	await process_frame
+	await process_frame
+	_check(card.name_tooltip().is_empty(), "a short name needs no tooltip")
+	var long_name: String = "Rennradfahrt - Alpenbrevet 2026 Gold, Andermatt und zurück"
+	var long_course: Dictionary = course.duplicate()
+	long_course["name"] = long_name
+	var long_card: CourseCard = CourseCard.new(long_course, false)
+	root.add_child(long_card)
+	await process_frame
+	await process_frame
+	_check(
+		long_card.name_tooltip() == long_name,
+		"a cut-off name shows in full on hover: %s" % long_card.name_tooltip()
+	)
 	_check(not _has_badge(card), "a GPX course has no video badge")
 	card.free()
 	course["video"] = "Gurten.MP4"
@@ -518,6 +542,163 @@ func _check(condition: bool, what: String) -> void:
 	if not condition:
 		push_error("UI SMOKE TEST FAILED: " + what)
 		_failed = true
+
+
+## A click on the Courses tab while a course page covers the gallery brings it back (#188).
+func _courses_tab() -> void:
+	var main: Control = (load(MAIN_SCENE) as PackedScene).instantiate()
+	root.add_child(main)
+	await process_frame
+	var start: StartPage = main.get_node("StartPage")
+	var detail: Control = start.get("_detail")
+	var courses: Control = start.get("_courses")
+	var tabs: TabContainer = start.get("_tabs")
+	courses.hide()
+	detail.show()
+	tabs.get_tab_bar().tab_clicked.emit(StartPage.Tab.COURSES)
+	_check(courses.visible and not detail.visible, "the Courses tab brings the gallery back")
+	main.free()
+
+
+## Switching riders changes the avatar on the bike at once, not only with the next world.
+func _rider_switch() -> void:
+	var main: Control = (load(MAIN_SCENE) as PackedScene).instantiate()
+	root.add_child(main)
+	await process_frame
+	var torqa: TorqaApp = main.get_node("Torqa")
+	var world: RideWorld = main.get_node("World")
+	var avatar: RiderAvatar = world.get("_avatar")
+	var profile: Dictionary = torqa.profile()
+	var profile_id: String = profile["id"]
+	var before: String = profile.get("avatar", "female")
+	var other: String = "male" if before != "male" else "female"
+	profile["avatar"] = other
+	var id: String = torqa.save_profile(profile_id, profile)
+	_check(not id.is_empty(), "the rider is saved")
+	_check(avatar.rider == other, "the rider on the bike follows the rider: %s" % avatar.rider)
+	profile["avatar"] = before
+	torqa.save_profile(profile_id, profile)
+	main.free()
+
+
+## The ride view's controls (#189): icons with tooltips, the simulation's speeds when
+## simulating, and a chevron that folds the bar away and back.
+func _ride_bar() -> void:
+	var bar: RideBar = RideBar.new()
+	root.add_child(bar)
+	var tools: Control = bar.get("_tools")
+	for button: Button in [bar.get("_settings"), bar.get("_overlay"), bar.get("_fold")]:
+		_check(
+			button.icon != null and not button.tooltip_text.is_empty(),
+			"an icon with a tooltip: %s" % button.tooltip_text
+		)
+	_check(UiIcons.texture("cog").get_width() == RideBar.ICON, "icons drawn at their size")
+	var folds: Array[bool] = []
+	bar.folded_changed.connect(func(folded: bool) -> void: folds.append(folded))
+	var fold: Button = bar.get("_fold")
+	fold.pressed.emit()
+	_check(bar.folded and not tools.visible and folds == [true], "folded away: %s" % [folds])
+	fold.pressed.emit()
+	_check(not bar.folded and tools.visible and folds == [true, false], "unfolded again")
+	var speeds: Control = bar.get("_simulation")
+	_check(not speeds.visible, "no speeds unless simulating")
+	bar.set_simulating(true)
+	var chosen: Array[float] = []
+	bar.speed_chosen.connect(func(scale: float) -> void: chosen.append(scale))
+	var buttons: Array[Button] = bar.get("_speed_buttons")
+	buttons[2].pressed.emit()
+	_check(speeds.visible and chosen == [5.0], "a speed chosen: %s" % [chosen])
+	bar.show_speed(10.0)
+	_check(
+		buttons[3].button_pressed and not buttons[2].button_pressed, "the speed in effect is marked"
+	)
+	bar.show_finish("back")
+	var finish: Button = bar.get("_finish")
+	_check(finish.visible, "the way back shows")
+	var pause: Button = bar.get("_pause")
+	var pausing: Texture2D = pause.icon
+	bar.show_paused(true)
+	_check(pause.icon != pausing and pause.tooltip_text != "", "paused: play to go on")
+	bar.free()
+
+
+## The rename and delete controls of a ride are icons with tooltips (#190).
+func _summary_icons() -> void:
+	var title: EditableTitle = EditableTitle.new("Rename it")
+	root.add_child(title)
+	var pencil: Button = title.get("_button")
+	_check(pencil.icon != null and pencil.tooltip_text == "Rename it", "a pencil to rename")
+	title.free()
+	var main: Control = (load(MAIN_SCENE) as PackedScene).instantiate()
+	root.add_child(main)
+	await process_frame
+	var history: Control = main.get_node("HistoryScreen")
+	var bin: Button = history.get("_delete_button")
+	_check(bin.icon != null and not bin.tooltip_text.is_empty(), "a bin to delete, with a tooltip")
+	main.free()
+
+
+## The Profile tab's buttons are icons with tooltips, and the rider has an initial (#191).
+## The Profile tab lists the riders as cards (#191, #194): the active one marked, the others
+## with a way to use them, each unfolding to the whole setup in two columns.
+func _profile_icons() -> void:
+	var tab: ProfileTab = ProfileTab.new()
+	root.add_child(tab)
+	var badge: PanelContainer = UiTheme.initial("  david ")
+	_check((badge.get_child(0) as Label).text == "D", "the rider's initial")
+	badge.free()
+	var ann: Dictionary = {
+		"id": "ann",
+		"name": "Ann",
+		"language": "de",
+		"drivetrain": "single_cog",
+		"chainring": 46,
+		"cog": 14,
+		"ftp_w": 220.0,
+		"rider_mass_kg": 60.0,
+		"max_heart_rate_bpm": 190.0
+	}
+	var bob: Dictionary = {"id": "bob", "name": "Bob", "ftp_w": 300.0, "rider_mass_kg": 80.0}
+	tab.call("_show_riders", [ann, bob], "bob")
+	var cards: VBoxContainer = tab.get("_cards")
+	_check(cards.get_child_count() == 2, "a card per rider")
+	var texts: Array[String] = []
+	for label: Node in cards.find_children("*", "Label", true, false):
+		texts.append((label as Label).text)
+	_check("Active" in texts and "Ann" in texts, "the active rider is marked: %s" % [texts])
+	var buttons: Array[String] = []
+	for button: Node in cards.find_children("*", "Button", true, false):
+		buttons.append((button as Button).text)
+	_check(buttons.count("Use") == 1, "the other rider can be used: %s" % [buttons])
+	_check(cards.find_children("*", "GridContainer", true, false).is_empty(), "folded at first")
+	var unfolded: Dictionary = tab.get("_unfolded")
+	unfolded["ann"] = true
+	tab.call("_show_riders", [ann, bob], "bob")
+	var grids: Array[Node] = cards.find_children("*", "GridContainer", true, false)
+	var rows: Array[String] = []
+	for label: Node in cards.find_children("*", "Label", true, false):
+		rows.append((label as Label).text)
+	_check(
+		grids.size() == 1 and "Deutsch" in rows and "46 T" in rows and "Z7 Neuromuscular" in rows,
+		"unfolded: every setting and the zones: %s" % [rows]
+	)
+	tab.free()
+
+
+## A course's card shows its map under the route once it has one (#192).
+func _map_preview() -> void:
+	var card: PathCard = PathCard.new()
+	root.add_child(card)
+	_check(not card.has_map(), "black until a map is kept")
+	var image: Image = Image.create_empty(8, 8, false, Image.FORMAT_RGBA8)
+	image.fill(Color.SEA_GREEN)
+	card.set_map(image.save_png_to_buffer())
+	_check(card.has_map(), "the map shows")
+	card.set_map(PackedByteArray([1, 2, 3]))
+	_check(not card.has_map(), "not a picture: black again")
+	card.free()
+	var nothing: PackedByteArray = await MapPreview.capture(self, {}, PackedVector2Array())
+	_check(nothing.is_empty(), "nothing to draw, nothing kept")
 
 
 ## The free camera turns with the mouse while Shift is held, and not without (#66).

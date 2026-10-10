@@ -6,7 +6,7 @@
 // `#[gdextension]` macro drops item-level attributes, so the allow must be crate-wide.
 #![allow(unsafe_code)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use godot::classes::image::Format as ImageFormat;
@@ -145,6 +145,10 @@ impl TorqaApp {
     #[signal]
     fn remembered_missing(names: PackedStringArray);
 
+    /// The active rider changed: another one selected, or one saved or created.
+    #[signal]
+    fn profile_changed();
+
     /// Something went wrong.
     #[signal]
     fn failed(message: GString);
@@ -224,16 +228,24 @@ impl TorqaApp {
         }
     }
 
-    /// A video about to be imported: `{duration_s, has_gps}`; empty (and `failed`) if it
+    /// A video about to be imported, or a Tacx `.rlv` about to be added to a course:
+    /// `{video, duration_s, has_gps, start_s, end_s}`, `video` the video file itself and
+    /// `start_s`/`end_s` where the ride lies in it as far as known; empty (and `failed`) if it
     /// cannot be read. Without GPS it is added to a GPX course with `add_video`.
     #[func]
     #[allow(clippy::needless_pass_by_value)] // #[func] parameters are passed by value from Godot
     fn video_probe(&mut self, path: GString) -> VarDictionary {
         match torqa_app::video::probe(&PathBuf::from(path.to_string())) {
-            Ok(probe) => vdict! {
-                "duration_s" => probe.duration.as_secs_f64(),
-                "has_gps" => probe.has_gps,
-            },
+            Ok(probe) => {
+                let video = probe.video.display().to_string();
+                vdict! {
+                    "video" => video.as_str(),
+                    "duration_s" => probe.duration.as_secs_f64(),
+                    "has_gps" => probe.has_gps,
+                    "start_s" => probe.span.0.as_secs_f64(),
+                    "end_s" => probe.span.1.as_secs_f64(),
+                }
+            }
             Err(message) => {
                 self.signals()
                     .failed()
@@ -677,6 +689,37 @@ impl TorqaApp {
         self.command(|app| app.set_overlay_window(window));
     }
 
+    /// Whether the ride view's control bar is folded away to its corner (#189).
+    #[func]
+    fn ride_bar_folded(&self) -> bool {
+        self.app.as_ref().is_some_and(App::ride_bar_folded)
+    }
+
+    /// Remembers whether the ride view's control bar is folded away.
+    #[func]
+    fn set_ride_bar_folded(&mut self, folded: bool) {
+        self.command(|app| app.set_ride_bar_folded(folded));
+    }
+
+    /// The map picture of the course at `path` (#192): a PNG, empty without one.
+    #[func]
+    #[allow(clippy::needless_pass_by_value)] // #[func] parameters are passed by value from Godot
+    #[allow(clippy::unused_self)] // a #[func] is called on the node
+    fn course_preview(&self, path: GString) -> PackedByteArray {
+        App::course_preview(Path::new(&path.to_string()))
+            .map(|png| PackedByteArray::from(png.as_slice()))
+            .unwrap_or_default()
+    }
+
+    /// Keeps `png`, the map picture the app drew, with the course at `path` (#192).
+    #[func]
+    #[allow(clippy::needless_pass_by_value)] // #[func] parameters are passed by value from Godot
+    fn set_course_preview(&mut self, path: GString, png: PackedByteArray) {
+        let bytes = png.to_vec();
+        let path = PathBuf::from(path.to_string());
+        self.command(|app| app.set_course_preview(&path, &bytes));
+    }
+
     /// Whether rides are simulated (fake trainer): they can be sped up and jumped (#53).
     #[func]
     fn simulating(&self) -> bool {
@@ -1108,6 +1151,19 @@ impl TorqaApp {
         }
     }
 
+    /// Pauses or resumes the ride: the clock, the road and the trainer wait. Returns whether
+    /// the ride is paused afterwards.
+    #[func]
+    fn set_paused(&mut self, paused: bool) -> bool {
+        self.app.as_mut().is_some_and(|app| app.set_paused(paused))
+    }
+
+    /// Whether the ride is paused.
+    #[func]
+    fn is_paused(&self) -> bool {
+        self.app.as_ref().is_some_and(App::is_paused)
+    }
+
     /// Changes difficulty and descent mode of the current ride.
     #[func]
     fn adjust_ride(&mut self, difficulty: f64, flat_descents: bool) {
@@ -1143,13 +1199,7 @@ impl TorqaApp {
     fn profiles(&self) -> VarArray {
         let mut array = VarArray::new();
         for stored in self.app.as_ref().map(App::profiles).unwrap_or_default() {
-            array.push(
-                &vdict! {
-                    "id" => stored.id.as_str(),
-                    "name" => stored.profile.name.as_str(),
-                }
-                .to_variant(),
-            );
+            array.push(&profile_dict(&stored.id, &stored.profile).to_variant());
         }
         array
     }
@@ -1159,39 +1209,12 @@ impl TorqaApp {
     /// locale code, empty for the system language, and `avatar` either `"female"` or `"male"`.
     #[func]
     fn profile(&self) -> VarDictionary {
-        let Some(stored) = self.app.as_ref().map(App::profile) else {
-            return VarDictionary::new();
-        };
-        let p = &stored.profile;
-        vdict! {
-            "id" => stored.id.as_str(),
-            "name" => p.name.as_str(),
-            "rider_mass_kg" => p.rider_mass.0,
-            "bike_mass_kg" => p.bike_mass.0,
-            "ftp_w" => p.ftp.0,
-            "max_heart_rate_bpm" => p.max_heart_rate.0,
-            "units" => match p.units {
-                UnitSystem::Metric => "metric",
-                UnitSystem::Imperial => "imperial",
-            },
-            "language" => p.language.as_str(),
-            "avatar" => match p.avatar {
-                Avatar::Female => "female",
-                Avatar::Male => "male",
-            },
-            "drivetrain" => match p.drivetrain {
-                Drivetrain::Cassette => "cassette",
-                Drivetrain::SingleCog { .. } => "single_cog",
-            },
-            "chainring" => match p.drivetrain {
-                Drivetrain::SingleCog { chainring, .. } => i64::from(chainring),
-                Drivetrain::Cassette => 50,
-            },
-            "cog" => match p.drivetrain {
-                Drivetrain::SingleCog { cog, .. } => i64::from(cog),
-                Drivetrain::Cassette => 14,
-            },
-        }
+        self.app
+            .as_ref()
+            .map(App::profile)
+            .map_or_else(VarDictionary::new, |stored| {
+                profile_dict(&stored.id, &stored.profile)
+            })
     }
 
     /// How far a rider at `speed_kmh` leans into a bend of `curvature` (1 / radius, positive to
@@ -1208,7 +1231,11 @@ impl TorqaApp {
     #[func]
     #[allow(clippy::needless_pass_by_value)] // #[func] parameters are passed by value from Godot
     fn select_profile(&mut self, id: GString) -> bool {
-        self.command(|app| app.select_profile(&id.to_string()))
+        let selected = self.command(|app| app.select_profile(&id.to_string()));
+        if selected {
+            self.signals().profile_changed().emit();
+        }
+        selected
     }
 
     /// Saves a rider (a new one if `id` is empty) from a dictionary shaped like `profile()`
@@ -1231,6 +1258,14 @@ impl TorqaApp {
             bike_mass: Kilograms(number("bike_mass_kg", defaults.bike_mass.0)),
             ftp: Watts(number("ftp_w", defaults.ftp.0)),
             max_heart_rate: BeatsPerMinute(number("max_heart_rate_bpm", defaults.max_heart_rate.0)),
+            default_difficulty: Percent(
+                number("default_difficulty_pct", defaults.default_difficulty.0).clamp(0.0, 100.0),
+            ),
+            power_zones: Profile::sane_power_zones(&shares(&data, "power_zones_pct")),
+            heart_rate_zones: Profile::sane_heart_rate_zones(&shares(
+                &data,
+                "heart_rate_zones_pct",
+            )),
             language: data
                 .get("language")
                 .and_then(|v| v.try_to::<GString>().ok())
@@ -1278,7 +1313,10 @@ impl TorqaApp {
             return GString::new();
         };
         match app.save_profile(id.as_deref(), profile) {
-            Ok(id) => GString::from(id.as_str()),
+            Ok(id) => {
+                self.signals().profile_changed().emit();
+                GString::from(id.as_str())
+            }
             Err(error) => {
                 let message = error.to_string();
                 self.signals()
@@ -1326,6 +1364,7 @@ impl TorqaApp {
             |value: Option<u8>| value.map_or_else(Variant::nil, |z| i64::from(z).to_variant());
         let mut dict = vdict! {
             "elapsed_s" => state.elapsed.as_secs_f64(),
+            "paused" => app.is_paused(),
             "distance_m" => state.distance.0,
             "speed_kmh" => state.speed.as_kilometers_per_hour(),
             "power" => &optional(t.power.map(|p| p.0)),
@@ -1803,6 +1842,19 @@ fn hud_values(app: &App) -> VarDictionary {
     values
 }
 
+/// Zone bounds as percentages, for the rider settings.
+fn percent(bounds: &[f64]) -> PackedFloat64Array {
+    bounds.iter().map(|b| b * 100.0).collect()
+}
+
+/// Zone bounds from `data[key]` in percent, as shares; empty where missing.
+fn shares(data: &VarDictionary, key: &str) -> Vec<f64> {
+    data.get(key)
+        .and_then(|v| v.try_to::<PackedFloat64Array>().ok())
+        .map(|a| a.as_slice().iter().map(|p| p / 100.0).collect())
+        .unwrap_or_default()
+}
+
 /// Preview points as Godot vectors.
 /// A workout's state for `ride_state()`.
 fn workout_state(w: &torqa_session::workout::WorkoutState) -> Variant {
@@ -2104,4 +2156,42 @@ fn sync_marks(marks: &PackedVector2Array) -> Vec<torqa_app::SyncMark> {
             time: seconds(f64::from(m.y)),
         })
         .collect()
+}
+
+/// A rider as `profile()` describes them: `{id, name, rider_mass_kg, bike_mass_kg, ftp_w,
+/// max_heart_rate_bpm, units, language, avatar, drivetrain, chainring, cog, power_zones_pct,
+/// heart_rate_zones_pct, default_difficulty_pct}`.
+fn profile_dict(id: &str, p: &Profile) -> VarDictionary {
+    vdict! {
+        "id" => id,
+        "name" => p.name.as_str(),
+        "rider_mass_kg" => p.rider_mass.0,
+        "bike_mass_kg" => p.bike_mass.0,
+        "ftp_w" => p.ftp.0,
+        "max_heart_rate_bpm" => p.max_heart_rate.0,
+        "units" => match p.units {
+            UnitSystem::Metric => "metric",
+            UnitSystem::Imperial => "imperial",
+        },
+        "language" => p.language.as_str(),
+        "avatar" => match p.avatar {
+            Avatar::Female => "female",
+            Avatar::Male => "male",
+        },
+        "drivetrain" => match p.drivetrain {
+            Drivetrain::Cassette => "cassette",
+            Drivetrain::SingleCog { .. } => "single_cog",
+        },
+        "chainring" => match p.drivetrain {
+            Drivetrain::SingleCog { chainring, .. } => i64::from(chainring),
+            Drivetrain::Cassette => 50,
+        },
+        "cog" => match p.drivetrain {
+            Drivetrain::SingleCog { cog, .. } => i64::from(cog),
+            Drivetrain::Cassette => 14,
+        },
+        "power_zones_pct" => &percent(&p.power_zones),
+        "heart_rate_zones_pct" => &percent(&p.heart_rate_zones),
+        "default_difficulty_pct" => p.default_difficulty.0,
+    }
 }

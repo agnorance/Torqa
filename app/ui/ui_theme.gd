@@ -134,9 +134,10 @@ static func build() -> Theme:
 	return theme
 
 
-## The translucent card used for HUD and setup panels.
-static func panel() -> StyleBoxFlat:
-	var box: StyleBoxFlat = _box(PANEL, RADIUS, 16, 14)
+## The translucent card used for HUD and setup panels; opaque with `alpha` 1, for a panel
+## over other windows rather than the 3D scene.
+static func panel(alpha: float = PANEL.a) -> StyleBoxFlat:
+	var box: StyleBoxFlat = _box(Color(PANEL, alpha), RADIUS, 16, 14)
 	box.border_color = Color(1, 1, 1, 0.07)
 	box.set_border_width_all(1)
 	box.shadow_color = Color(0, 0, 0, 0.22)
@@ -155,12 +156,33 @@ static func hud_button() -> StyleBoxFlat:
 	return _box(PANEL, 10, 14, 9)
 
 
+## The slim bar of icon buttons over the 3D scene (#189).
+static func bar() -> StyleBoxFlat:
+	return _box(PANEL, 12, 6, 4)
+
+
 ## A list entry that can be dragged; the highlighted one marks the HUD's large figure.
 static func chip(highlighted: bool) -> StyleBoxFlat:
 	var box: StyleBoxFlat = _box(Color(ACCENT, 0.22) if highlighted else SURFACE, 8, 12, 4)
 	box.border_color = Color(ACCENT, 0.6) if highlighted else Color(1, 1, 1, 0.06)
 	box.set_border_width_all(1)
 	return box
+
+
+## A rider's initial in a round accent badge, standing in for a face (#191).
+static func initial(rider_name: String, size: int = 40) -> PanelContainer:
+	var badge: PanelContainer = PanelContainer.new()
+	badge.custom_minimum_size = Vector2(size, size)
+	badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	badge.add_theme_stylebox_override("panel", _box(ACCENT, size / 2, 0, 0))
+	var label: Label = Label.new()
+	label.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+	label.text = rider_name.strip_edges().left(1).to_upper()
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", size / 2)
+	badge.add_child(label)
+	return badge
 
 
 ## A caption label: small, muted, upper case; `text` is translated first.

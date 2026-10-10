@@ -16,6 +16,8 @@ it slows down, sprint and it speeds up. The 3D world is not used on video course
   *where* they are: they are ridden along their video only (no 3D world, no map position),
   with the slopes on the trainer as recorded. The video's name in the RLV may be an old
   Windows path; Torqa looks for that file name (or the RLV's own name) next to the `.rlv`.
+  To give an RLV a place, add it to a GPX course of the same road instead — see
+  [Tacx RLVs on a GPX route](#tacx-rlvs-on-a-gpx-route).
 - **Any other video** is added to the course of its GPX route — see below. Importing a video
   without GPS here shows these steps instead.
 - **Route videos made for Incyclist** — a folder with a video, a `.gpx` route and an `.xml`
@@ -42,6 +44,23 @@ The course is now ridden along the video. Between neighbouring points the video 
 distance evenly; the GPX's own timestamps are not used (they come from another recording).
 **Align video…** changes the points later; the course file keeps the change.
 
+### Tacx RLVs on a GPX route
+
+A Tacx Real Life Video knows how far and how fast the camera went, but not where. Ride it on
+a real place by adding it to a GPX course of the same road — many famous climbs and races
+are free to download as GPX (OpenStreetMap, climb databases, route planners):
+
+1. Import the **GPX route** and open its course.
+2. Press **Add video…** and choose the **`.rlv` file** (its video next to it, as for the
+   import above; the `.pgmf` is not needed).
+3. The start and end points open where the RLV's course starts and ends in the video. Move
+   them to where the GPX starts and ends, and add points where the two disagree.
+
+Between the points the video follows the RLV's record of the camera's speed — it slows down
+where the camera did, on the climbs — rather than going evenly, so few points are needed.
+The course gets a map, a 3D world and the GPX's terrain-corrected slopes on the trainer. The
+course file keeps the RLV's speeds: only the video has to travel with it.
+
 **Remove video** on any video course's page takes the video off: the course is then ridden
 in 3D only. Courses made from a video with GPS follow their GPS and have
 nothing to align.
@@ -60,15 +79,21 @@ The video's own **sound** plays along at the same speed, without sounding higher
 it is stretched, not sped up like a tape. It fades out when you slow to a crawl or stop.
 Switch it off under **Sound** in the ride options (course page or **Settings** while riding).
 
-Videos are decoded on the processor for now. 1080p is the target; larger videos are scaled
-down while playing, which may not keep up — hardware decoding is planned.
+Videos are decoded on the processor for now, on all its cores. 1080p is the target; larger
+videos are scaled down while playing, which may not keep up on a small machine — hardware
+decoding is planned.
 
-## The video stays where it is
+## The video stays beside the course
 
 Videos are large, so a video course (`.tqc`) only **refers** to its video, it does not contain
-it. Torqa looks for the video where it was imported from, then next to the course file (by name
-and size). To move a video course to another computer, copy the `.tqc` and the video into the
-same folder. If the video is missing, opening the course says which file to put there.
+it. When a course is prepared, Torqa keeps the course's own copy of the video next to the
+course file in the [library](courses.md): a hard link where the library lies on the same disk
+as the video, which takes no extra space, else a copy. The course rides on when the file it was
+imported from is moved or deleted. Opening a course looks for the video where the course keeps
+it, then next to the course file (by name and size). To move a video course to another
+computer, copy the `.tqc` and the video into the same folder. If the video is missing, opening
+the course says which file to put there. Deleting a course deletes its copy of the video too,
+unless another course rides along the same file; a video anywhere else stays where it is.
 
 ## Licences
 

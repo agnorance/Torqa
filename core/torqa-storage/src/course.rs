@@ -29,6 +29,8 @@ pub const FORMAT_VERSION: u32 = 1;
 const MANIFEST: &str = "manifest.json";
 const ROUTE: &str = "route.gpx";
 const DATA: &str = "data/";
+/// The course's map picture, drawn by the app when the course was prepared (#192).
+const PREVIEW: &str = "preview.png";
 
 /// Reading or writing a course file failed.
 #[derive(Debug, thiserror::Error)]
@@ -110,6 +112,11 @@ pub struct VideoReference {
     /// those two.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub marks: Vec<[f64; 2]>,
+    /// The video's own pace between the marks, `[distance m, video s]` at each change of speed
+    /// as a Tacx RLV records it, kept here so the course rides without the `.rlv`; empty for
+    /// videos that go evenly from mark to mark.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pace: Vec<[f64; 2]>,
     /// Whether the route is a real place; `false` for courses known only by distance and
     /// slope (Tacx RLV), which are ridden along their video only.
     #[serde(default = "yes", skip_serializing_if = "is_yes")]
@@ -141,6 +148,46 @@ impl VideoReference {
             .into_iter()
             .find(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.len() == self.size))
     }
+}
+
+/// Keeps `video` beside the course file `course` as the course's own copy (#165), so the course
+/// outlives its import source: a hard link where both lie on one file system, which takes no
+/// space, else a copy written aside and renamed into place. A file of the same name and `size`
+/// there already (the video itself, or an earlier copy) is used as it is; a different file of
+/// that name is left alone and the copy numbered. Returns the path beside the course.
+///
+/// # Errors
+/// An I/O error linking or copying.
+pub fn keep_video(video: &Path, course: &Path, size: u64) -> io::Result<PathBuf> {
+    let (Some(stem), Some(extension)) = (
+        video.file_stem().map(|s| s.to_string_lossy()),
+        video.extension().map(|e| e.to_string_lossy()),
+    ) else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "a video without a file name",
+        ));
+    };
+    let dir = course.parent().unwrap_or_else(|| Path::new("."));
+    let same_size = |p: &Path| std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.len() == size);
+    let mut beside = dir.join(format!("{stem}.{extension}"));
+    let mut n = 1;
+    while beside.exists() && !same_size(&beside) {
+        n += 1;
+        beside = dir.join(format!("{stem}-{n}.{extension}"));
+    }
+    if same_size(&beside) {
+        return Ok(beside);
+    }
+    if std::fs::hard_link(video, &beside).is_ok() {
+        return Ok(beside);
+    }
+    let partial = beside.with_extension("part");
+    let copied = std::fs::copy(video, &partial).and_then(|_| std::fs::rename(&partial, &beside));
+    if copied.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    copied.map(|()| beside)
 }
 
 /// A course read back from its file.
@@ -268,19 +315,58 @@ pub fn unpack(path: &Path, data_root: &Path) -> Result<Unpacked, CourseError> {
 /// # Errors
 /// [`CourseError::NewerFormat`] for files from a newer Torqa, or an I/O, zip or manifest error.
 pub fn rewrite_manifest(path: &Path, manifest: &Manifest) -> Result<(), CourseError> {
+    rewrite(path, MANIFEST, |out| {
+        out.start_file(
+            MANIFEST,
+            SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+        )?;
+        serde_json::to_writer_pretty(out, manifest)?;
+        Ok(())
+    })
+}
+
+/// The course's map picture, if it has one: the PNG the app drew when it was prepared (#192).
+#[must_use]
+pub fn preview(path: &Path) -> Option<Vec<u8>> {
+    let mut zip = ZipArchive::new(BufReader::new(File::open(path).ok()?)).ok()?;
+    let mut entry = zip.by_name(PREVIEW).ok()?;
+    let mut png = Vec::new();
+    entry.read_to_end(&mut png).ok()?;
+    Some(png)
+}
+
+/// Puts the course's map picture `png` into its file, in place of an earlier one (#192).
+///
+/// # Errors
+/// If the course cannot be read or written.
+pub fn set_preview(path: &Path, png: &[u8]) -> Result<(), CourseError> {
+    rewrite(path, PREVIEW, |out| {
+        // A PNG is compressed already.
+        out.start_file(
+            PREVIEW,
+            SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+        )?;
+        out.write_all(png)?;
+        Ok(())
+    })
+}
+
+/// Writes the course again with the entry `replaced` written by `write` and everything else
+/// copied as it is; the file appears whole or not at all.
+fn rewrite(
+    path: &Path,
+    replaced: &str,
+    write: impl FnOnce(&mut ZipWriter<BufWriter<File>>) -> Result<(), CourseError>,
+) -> Result<(), CourseError> {
     let mut zip = ZipArchive::new(BufReader::new(File::open(path)?))?;
     manifest_of(&mut zip)?;
     let partial = path.with_extension("part");
     let mut out = ZipWriter::new(BufWriter::new(File::create(&partial)?));
     let written = (|| {
-        out.start_file(
-            MANIFEST,
-            SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
-        )?;
-        serde_json::to_writer_pretty(&mut out, manifest)?;
+        write(&mut out)?;
         for index in 0..zip.len() {
             let entry = zip.by_index_raw(index)?;
-            if entry.name() != MANIFEST {
+            if entry.name() != replaced {
                 out.raw_copy_file(entry)?;
             }
         }
@@ -336,6 +422,24 @@ mod tests {
             profile: vec![[0.0, 500.0], [12_345.0, 620.0]],
             video: None,
         }
+    }
+
+    #[test]
+    fn a_course_keeps_its_map_picture() {
+        let dir = temp_dir("preview");
+        let path = dir.join("lake.tqc");
+        write(&path, &manifest(), "<gpx/>", &dir, &[]).unwrap();
+        assert_eq!(preview(&path), None);
+
+        set_preview(&path, b"PNG one").unwrap();
+        assert_eq!(preview(&path).as_deref(), Some(&b"PNG one"[..]));
+        // Drawn again (a newer map): replaced, the rest of the course as it was.
+        set_preview(&path, b"PNG two").unwrap();
+
+        assert_eq!(preview(&path).as_deref(), Some(&b"PNG two"[..]));
+        let read = read_manifest(&path).unwrap();
+        assert_eq!(read.name, manifest().name);
+        assert_eq!(unpack(&path, &dir.join("out")).unwrap().gpx, "<gpx/>");
     }
 
     #[test]
@@ -419,6 +523,7 @@ mod tests {
             offset_s: 0.0,
             end_s: None,
             marks: Vec::new(),
+            pace: Vec::new(),
             located: true,
         };
 
@@ -485,5 +590,31 @@ mod tests {
         assert!(matches!(error, CourseError::OutsideRoot(..)));
         assert!(!dir.join("c.tqc").exists());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_course_keeps_its_video_beside_it() {
+        let dir = temp_dir("keep-video");
+        let video = dir.join("Ride.MOV");
+        std::fs::write(&video, b"frames").unwrap();
+        let library = dir.join("courses");
+        std::fs::create_dir_all(&library).unwrap();
+        let course = library.join("ride.tqc");
+
+        let kept = keep_video(&video, &course, 6).unwrap();
+
+        assert_eq!(kept, library.join("Ride.MOV"));
+        assert_eq!(std::fs::read(&kept).unwrap(), b"frames");
+        // The copy outlives the original.
+        std::fs::remove_file(&video).unwrap();
+        assert_eq!(std::fs::read(&kept).unwrap(), b"frames");
+        // Kept again: the copy is the file, and the file is its own copy.
+        assert_eq!(keep_video(&kept, &course, 6).unwrap(), kept);
+        // Another video of the same name is not written over.
+        std::fs::write(&video, b"other frames").unwrap();
+        assert_eq!(
+            keep_video(&video, &course, 12).unwrap(),
+            library.join("Ride-2.MOV")
+        );
     }
 }

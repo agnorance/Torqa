@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use torqa_domain::profile::{Avatar, Drivetrain, Profile, UnitSystem};
 use torqa_domain::shifting::{ButtonAction, ButtonMap, Control, Press};
-use torqa_domain::units::{BeatsPerMinute, Kilograms, Watts};
+use torqa_domain::units::{BeatsPerMinute, Kilograms, Percent, Watts};
 
 const PROFILES: &str = "profiles";
 const PROFILE_FILE: &str = "profile.toml";
@@ -53,6 +53,11 @@ struct ProfileFile {
     drivetrain: DrivetrainFile,
     chainring: u8,
     cog: u8,
+    default_difficulty_pct: f64,
+    /// Upper bounds of the power and heart-rate zones in percent of FTP and of the maximum
+    /// heart rate; the standard zones where missing or out of order.
+    power_zones_pct: Vec<f64>,
+    heart_rate_zones_pct: Vec<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -116,8 +121,16 @@ impl From<&Profile> for ProfileFile {
                 Drivetrain::SingleCog { cog, .. } => cog,
                 Drivetrain::Cassette => DEFAULT_COG,
             },
+            default_difficulty_pct: p.default_difficulty.0,
+            power_zones_pct: p.power_zones.iter().map(|b| b * 100.0).collect(),
+            heart_rate_zones_pct: p.heart_rate_zones.iter().map(|b| b * 100.0).collect(),
         }
     }
+}
+
+/// Percentages as shares.
+fn shares(percent: &[f64]) -> Vec<f64> {
+    percent.iter().map(|p| p / 100.0).collect()
 }
 
 impl From<ProfileFile> for Profile {
@@ -144,6 +157,9 @@ impl From<ProfileFile> for Profile {
                     cog: f.cog.max(1),
                 },
             },
+            default_difficulty: Percent(f.default_difficulty_pct.clamp(0.0, 100.0)),
+            power_zones: Profile::sane_power_zones(&shares(&f.power_zones_pct)),
+            heart_rate_zones: Profile::sane_heart_rate_zones(&shares(&f.heart_rate_zones_pct)),
         }
     }
 }
@@ -170,6 +186,8 @@ struct Settings {
     graphics_quality: Option<GraphicsQuality>,
     /// Where the overlay was last on screen (R55).
     overlay: Option<OverlayWindow>,
+    /// Whether the ride view's control bar is folded away to its corner (#189).
+    ride_bar_folded: Option<bool>,
 }
 
 /// What the Di2 shifter's buttons do (#139): for each D-Fly channel, the action of each kind
@@ -532,6 +550,23 @@ pub fn set_overlay_window(data_dir: &Path, window: OverlayWindow) -> Result<(), 
     save_settings(data_dir, &settings)
 }
 
+/// Whether the ride view's control bar is folded away to its corner (#189); shown until it
+/// is folded.
+#[must_use]
+pub fn ride_bar_folded(data_dir: &Path) -> bool {
+    settings(data_dir).ride_bar_folded.unwrap_or(false)
+}
+
+/// Remembers whether the ride view's control bar is folded away.
+///
+/// # Errors
+/// On file system errors.
+pub fn set_ride_bar_folded(data_dir: &Path, folded: bool) -> Result<(), ProfileError> {
+    let mut settings = settings(data_dir);
+    settings.ride_bar_folded = Some(folded);
+    save_settings(data_dir, &settings)
+}
+
 fn settings(data_dir: &Path) -> Settings {
     std::fs::read_to_string(data_dir.join(SETTINGS_FILE))
         .ok()
@@ -670,6 +705,20 @@ mod tests {
     }
 
     #[test]
+    fn the_folded_ride_bar_is_remembered_with_the_other_settings() {
+        let dir = temp_dir("ride-bar");
+        assert!(!ride_bar_folded(&dir));
+        set_graphics_quality(&dir, GraphicsQuality::High).unwrap();
+
+        set_ride_bar_folded(&dir, true).unwrap();
+
+        assert!(ride_bar_folded(&dir));
+        assert_eq!(graphics_quality(&dir), GraphicsQuality::High);
+        set_ride_bar_folded(&dir, false).unwrap();
+        assert!(!ride_bar_folded(&dir));
+    }
+
+    #[test]
     fn the_overlay_window_is_remembered_with_the_other_settings() {
         let dir = temp_dir("overlay");
         assert_eq!(overlay_window(&dir), None);
@@ -724,6 +773,9 @@ mod tests {
                 chainring: 46,
                 cog: 14,
             },
+            default_difficulty: Percent(65.0),
+            power_zones: [0.5, 0.7, 0.85, 1.0, 1.15, 1.4],
+            heart_rate_zones: [0.55, 0.65, 0.75, 0.85],
             ..Profile::default()
         };
         let anna = Profile {
