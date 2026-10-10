@@ -68,8 +68,6 @@ var _chart_left: float = 0.0
 var _plan_chart: WorkoutChart = WorkoutChart.new()
 ## The overlay (R55): only the HUD and the workout, the rest of the screen hidden meanwhile.
 var _overlay_hud: OverlayHud = OverlayHud.new()
-var _overlay_button: Button = Button.new()
-var _pause_button: Button = Button.new()
 var _hidden_by_overlay: Array[Control] = []
 var _time_scale: float = 1.0
 ## The virtual gear shown last (R9), to tell the rider of a shift; 0 before the first.
@@ -107,12 +105,10 @@ func begin(options: Dictionary) -> void:
 	_saved = false
 	_gear = 0
 	_summary_when_saved = false
-	_settings_button.show()
-	_finish_button.hide()
-	_pause_button.show()
-	_show_paused(false)
 	_bar.show_settings(true)
 	_bar.show_finish("")
+	_bar.show_pause(true)
+	_show_paused(false)
 	_bar.folded = _torqa.ride_bar_folded()
 	_workout = options.get("workout", {})
 	var on_its_own: bool = not _workout.is_empty() and not options.get("on_course", false)
@@ -180,26 +176,6 @@ func _ready() -> void:
 	_settings_dialog.hud_changed.connect(_on_hud_changed)
 	_settings_dialog.finish_requested.connect(_on_finish_requested)
 	_settings_dialog.abort_requested.connect(_on_abort_requested)
-	# Over the 3D scene, the light default buttons let road markings shine through the text.
-	for button: Button in [_settings_button, _finish_button]:
-		button.add_theme_stylebox_override("normal", UiTheme.hud_button())
-	_settings_button.pressed.connect(_open_settings)
-	_finish_button.pressed.connect(_on_finish_pressed)
-	_overlay_button.text = tr("Overlay")
-	_overlay_button.tooltip_text = tr(
-		"Only the HUD, on top of other windows, e.g. over a video (O)"
-	)
-	_overlay_button.focus_mode = Control.FOCUS_NONE
-	_overlay_button.add_theme_stylebox_override("normal", UiTheme.hud_button())
-	_overlay_button.pressed.connect(func() -> void: overlay_requested.emit(true))
-	_settings_button.add_sibling(_overlay_button)
-	_pause_button.text = tr("Pause")
-	_pause_button.tooltip_text = tr("Pause the ride: the clock and the trainer wait (P)")
-	_pause_button.focus_mode = Control.FOCUS_NONE
-	_pause_button.add_theme_stylebox_override("normal", UiTheme.hud_button())
-	_pause_button.pressed.connect(_toggle_pause)
-	_overlay_button.add_sibling(_pause_button)
-	_overlay_hud.pause_requested.connect(_toggle_pause)
 	# The controls in one bar at the bottom left (#189); the keys work with it folded too.
 	_bar.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT, Control.PRESET_MODE_MINSIZE, 24)
 	_bar.grow_horizontal = Control.GROW_DIRECTION_END
@@ -213,6 +189,8 @@ func _ready() -> void:
 	_overlay_hud.hide()
 	_overlay_hud.leave_requested.connect(func() -> void: overlay_requested.emit(false))
 	_overlay_hud.zoom_requested.connect(overlay_zoom_requested.emit)
+	_overlay_hud.pause_requested.connect(_toggle_pause)
+	_bar.pause_requested.connect(_toggle_pause)
 	add_child(_overlay_hud)
 
 
@@ -410,7 +388,7 @@ func _on_finish_requested() -> void:
 func _on_abort_requested() -> void:
 	_torqa.abort_ride()
 	_finished = true
-	_pause_button.hide()
+	_bar.show_pause(false)
 	closed.emit()
 
 
@@ -645,7 +623,7 @@ func _toggle_pause() -> void:
 
 
 func _show_paused(paused: bool) -> void:
-	_pause_button.text = tr("Resume") if paused else tr("Pause")
+	_bar.show_paused(paused)
 	_overlay_hud.show_paused(paused)
 	if paused:
 		_show_toast(tr("Paused"))
@@ -687,8 +665,7 @@ func _on_finish_pressed() -> void:
 
 func _finish_ride() -> void:
 	_finished = true
-	_pause_button.hide()
-	_settings_button.hide()
+	_bar.show_pause(false)
 	_bar.show_settings(false)
 	_torqa.finish_ride()
 	if not _saved:
@@ -699,7 +676,7 @@ func _finish_ride() -> void:
 
 func _on_ride_saved(path: String) -> void:
 	_finished = true
-	_pause_button.hide()
+	_bar.show_pause(false)
 	_saved = true
 	_saved_path = path
 	_bar.show_settings(false)

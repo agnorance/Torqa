@@ -613,6 +613,10 @@ func _ride_bar() -> void:
 	bar.show_finish("back")
 	var finish: Button = bar.get("_finish")
 	_check(finish.visible, "the way back shows")
+	var pause: Button = bar.get("_pause")
+	var pausing: Texture2D = pause.icon
+	bar.show_paused(true)
+	_check(pause.icon != pausing and pause.tooltip_text != "", "paused: play to go on")
 	bar.free()
 
 
