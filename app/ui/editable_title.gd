@@ -1,7 +1,7 @@
 class_name EditableTitle
 extends HBoxContainer
-## A large title that can be renamed in place (R50): it reads like a heading, and the Rename
-## button (or a click on it) turns it into a text field. Enter or leaving the field ends
+## A large title that can be renamed in place (R50): it reads like a heading, and the pencil
+## beside it (or a click on it) turns it into a text field. Enter or leaving the field ends
 ## editing.
 
 ## Editing ended; `text` holds what was typed.
@@ -33,7 +33,7 @@ func _init(rename_tooltip: String = "") -> void:
 	_edit.text_submitted.connect(func(_text: String) -> void: _edit.release_focus())
 	_edit.focus_exited.connect(func() -> void: edit_finished.emit())
 	add_child(_edit)
-	_button.text = tr("Rename")
+	_button.icon = UiIcons.texture("pencil")
 	_button.tooltip_text = rename_tooltip
 	_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_button.focus_mode = Control.FOCUS_NONE

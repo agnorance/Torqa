@@ -140,7 +140,10 @@ func _ready() -> void:
 	_subtitle.add_theme_color_override("font_color", UiTheme.MUTED)
 	titles.add_child(_subtitle)
 	title_row.add_child(titles)
-	_delete_button.text = tr("Delete ride")
+	_delete_button.icon = UiIcons.texture("bin")
+	_delete_button.tooltip_text = tr("Delete ride")
+	_delete_button.focus_mode = Control.FOCUS_NONE
+	_delete_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_delete_button.pressed.connect(_confirm_delete.popup_centered)
 	title_row.add_child(_delete_button)
 	_detail.add_child(title_row)

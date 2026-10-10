@@ -8,7 +8,7 @@ After a ride, its **summary** shows the same figures as the history: give the ri
 keep it with **Done** or **Discard ride**. Afterwards it is in the **History** tab.
 
 **Names**: a ride is called after its course and date (e.g. *Gurtenstrasse · Sat 3 Oct*)
-until you name it — press **Rename** (or click the title), in the summary or later in the history. Names
+until you name it — press the pencil beside the title (or click the title), in the summary or later in the history. Names
 are stored in the ride's JSON file only, so the files keep their names (sync-safe); uploads
 will send the name as the activity title.
 
@@ -19,7 +19,7 @@ The history shows:
 - **Chart**: power and heart rate over the ride, on top of the elevation.
 - **Time in zones**: power zones from your FTP, heart-rate zones from your maximum heart rate
   (see [riders.md](riders.md)). Sections without data, e.g. no heart-rate strap, are hidden.
-- **Delete ride** removes the FIT file and its summary.
+- The bin beside the title (**Delete ride**) removes the FIT file and its summary, after asking.
 
 Normalized power needs at least 30 s of power data. Intensity and TSS use the FTP the rider had
 when the ride was saved, so they do not change when you update your FTP later; time in zones
