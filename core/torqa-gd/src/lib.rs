@@ -1155,13 +1155,7 @@ impl TorqaApp {
     fn profiles(&self) -> VarArray {
         let mut array = VarArray::new();
         for stored in self.app.as_ref().map(App::profiles).unwrap_or_default() {
-            array.push(
-                &vdict! {
-                    "id" => stored.id.as_str(),
-                    "name" => stored.profile.name.as_str(),
-                }
-                .to_variant(),
-            );
+            array.push(&profile_dict(&stored.id, &stored.profile).to_variant());
         }
         array
     }
@@ -1171,42 +1165,12 @@ impl TorqaApp {
     /// locale code, empty for the system language, and `avatar` either `"female"` or `"male"`.
     #[func]
     fn profile(&self) -> VarDictionary {
-        let Some(stored) = self.app.as_ref().map(App::profile) else {
-            return VarDictionary::new();
-        };
-        let p = &stored.profile;
-        vdict! {
-            "id" => stored.id.as_str(),
-            "name" => p.name.as_str(),
-            "rider_mass_kg" => p.rider_mass.0,
-            "bike_mass_kg" => p.bike_mass.0,
-            "ftp_w" => p.ftp.0,
-            "max_heart_rate_bpm" => p.max_heart_rate.0,
-            "units" => match p.units {
-                UnitSystem::Metric => "metric",
-                UnitSystem::Imperial => "imperial",
-            },
-            "language" => p.language.as_str(),
-            "avatar" => match p.avatar {
-                Avatar::Female => "female",
-                Avatar::Male => "male",
-            },
-            "drivetrain" => match p.drivetrain {
-                Drivetrain::Cassette => "cassette",
-                Drivetrain::SingleCog { .. } => "single_cog",
-            },
-            "chainring" => match p.drivetrain {
-                Drivetrain::SingleCog { chainring, .. } => i64::from(chainring),
-                Drivetrain::Cassette => 50,
-            },
-            "cog" => match p.drivetrain {
-                Drivetrain::SingleCog { cog, .. } => i64::from(cog),
-                Drivetrain::Cassette => 14,
-            },
-            "power_zones_pct" => &percent(&p.power_zones),
-            "heart_rate_zones_pct" => &percent(&p.heart_rate_zones),
-            "default_difficulty_pct" => p.default_difficulty.0,
-        }
+        self.app
+            .as_ref()
+            .map(App::profile)
+            .map_or_else(VarDictionary::new, |stored| {
+                profile_dict(&stored.id, &stored.profile)
+            })
     }
 
     /// How far a rider at `speed_kmh` leans into a bend of `curvature` (1 / radius, positive to
@@ -2140,4 +2104,42 @@ fn sync_marks(marks: &PackedVector2Array) -> Vec<torqa_app::SyncMark> {
             time: seconds(f64::from(m.y)),
         })
         .collect()
+}
+
+/// A rider as `profile()` describes them: `{id, name, rider_mass_kg, bike_mass_kg, ftp_w,
+/// max_heart_rate_bpm, units, language, avatar, drivetrain, chainring, cog, power_zones_pct,
+/// heart_rate_zones_pct, default_difficulty_pct}`.
+fn profile_dict(id: &str, p: &Profile) -> VarDictionary {
+    vdict! {
+        "id" => id,
+        "name" => p.name.as_str(),
+        "rider_mass_kg" => p.rider_mass.0,
+        "bike_mass_kg" => p.bike_mass.0,
+        "ftp_w" => p.ftp.0,
+        "max_heart_rate_bpm" => p.max_heart_rate.0,
+        "units" => match p.units {
+            UnitSystem::Metric => "metric",
+            UnitSystem::Imperial => "imperial",
+        },
+        "language" => p.language.as_str(),
+        "avatar" => match p.avatar {
+            Avatar::Female => "female",
+            Avatar::Male => "male",
+        },
+        "drivetrain" => match p.drivetrain {
+            Drivetrain::Cassette => "cassette",
+            Drivetrain::SingleCog { .. } => "single_cog",
+        },
+        "chainring" => match p.drivetrain {
+            Drivetrain::SingleCog { chainring, .. } => i64::from(chainring),
+            Drivetrain::Cassette => 50,
+        },
+        "cog" => match p.drivetrain {
+            Drivetrain::SingleCog { cog, .. } => i64::from(cog),
+            Drivetrain::Cassette => 14,
+        },
+        "power_zones_pct" => &percent(&p.power_zones),
+        "heart_rate_zones_pct" => &percent(&p.heart_rate_zones),
+        "default_difficulty_pct" => p.default_difficulty.0,
+    }
 }
