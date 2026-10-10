@@ -570,6 +570,22 @@ func _profile_icons() -> void:
 		)
 	var badge: PanelContainer = UiTheme.initial("  david ")
 	_check((badge.get_child(0) as Label).text == "D", "the rider's initial")
+	# The summary unfolds to everything the dialog has (#194).
+	var rider: Dictionary = {
+		"name": "Ann", "language": "de", "drivetrain": "single_cog", "chainring": 46, "cog": 14
+	}
+	var grid: GridContainer = tab.get("_summary")
+	tab.call("_show_summary", rider)
+	var brief: int = grid.get_child_count()
+	tab.expanded = true
+	tab.call("_show_summary", rider)
+	var texts: Array[String] = []
+	for child: Node in grid.get_children():
+		texts.append((child as Label).text)
+	_check(
+		grid.get_child_count() == brief + 12 and "Deutsch" in texts and "46 T" in texts,
+		"all settings unfold: %s" % [texts]
+	)
 	tab.free()
 	badge.free()
 

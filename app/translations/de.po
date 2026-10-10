@@ -1143,3 +1143,9 @@ msgstr "Simulationsgeschwindigkeit"
 
 msgid "Switch the rider"
 msgstr "Fahrer wechseln"
+
+msgid "All settings"
+msgstr "Alle Einstellungen"
+
+msgid "Fewer"
+msgstr "Weniger"

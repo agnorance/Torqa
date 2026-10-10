@@ -2,7 +2,8 @@
 
 Each rider has a profile: name, weight, bike weight, FTP, maximum heart rate and units
 (metric or imperial). Pick the rider in the **Profile** tab; the pencil beside the list
-changes the profile, the plus adds a rider.
+changes the profile, the plus adds a rider. The tab shows the rider's figures; **All settings**
+under them unfolds everything the dialog has, the HUD's layout included.
 
 - **Weight + bike weight** set how hard climbs are and how fast you roll.
 - **FTP** sets the power zones shown under the power figure (Coggan's seven zones:

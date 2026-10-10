@@ -6,6 +6,15 @@ extends VBoxContainer
 ## The active rider changed (figures, units, language or HUD).
 signal profile_changed
 
+## Whether the summary shows every setting the dialog has, not only the figures (#194).
+var expanded: bool = false:
+	set(value):
+		expanded = value
+		_more.text = tr("Fewer") if expanded else tr("All settings")
+		_more.icon = UiIcons.texture("up" if expanded else "down", 16)
+		if _torqa != null:
+			_show_summary(_torqa.profile())
+
 var _torqa: TorqaApp
 var _riders: OptionButton = OptionButton.new()
 var _badge_slot: HBoxContainer = HBoxContainer.new()
@@ -13,6 +22,7 @@ var _name_label: Label = Label.new()
 var _edit_button: Button = Button.new()
 var _add_button: Button = Button.new()
 var _summary: GridContainer = GridContainer.new()
+var _more: Button = Button.new()
 var _dialog: ProfileDialog = ProfileDialog.new()
 
 
@@ -83,12 +93,20 @@ func _init() -> void:
 	row.add_child(_add_button)
 	add_child(row)
 	var card: PanelContainer = PanelContainer.new()
+	var rows: VBoxContainer = VBoxContainer.new()
+	rows.add_theme_constant_override("separation", 12)
 	_summary.columns = 2
 	_summary.add_theme_constant_override("h_separation", 24)
 	_summary.add_theme_constant_override("v_separation", 8)
-	card.add_child(_summary)
+	rows.add_child(_summary)
+	_more.focus_mode = Control.FOCUS_NONE
+	_more.size_flags_horizontal = Control.SIZE_SHRINK_END
+	_more.pressed.connect(func() -> void: expanded = not expanded)
+	rows.add_child(_more)
+	card.add_child(rows)
 	add_child(card)
 	add_child(_dialog)
+	expanded = false
 	_dialog.profile_confirmed.connect(_on_profile_confirmed)
 
 
@@ -108,8 +126,10 @@ func _on_profile_confirmed(id: String, profile: Dictionary, hud_layout: PackedSt
 
 
 func _show_summary(profile: Dictionary) -> void:
+	# Freed at once: the rows are rebuilt below and must not count twice meanwhile.
 	for child: Node in _summary.get_children():
-		child.queue_free()
+		_summary.remove_child(child)
+		child.free()
 	var imperial: bool = profile.get("units", "metric") == "imperial"
 	var weight: float = profile.get("rider_mass_kg", 0.0)
 	var bike: float = profile.get("bike_mass_kg", 0.0)
@@ -127,6 +147,8 @@ func _show_summary(profile: Dictionary) -> void:
 		["Rider on the bike", "Male rider" if profile.get("avatar") == "male" else "Female rider"],
 	]
 	# i18n-end
+	if expanded:
+		rows.append_array(_more_rows(profile))
 	for row: Array in rows:
 		var caption: String = row[0]
 		_summary.add_child(UiTheme.caption(caption))
@@ -141,3 +163,44 @@ static func _icon_button(button: Button, icon: String, tooltip: String) -> void:
 	button.tooltip_text = tooltip
 	button.focus_mode = Control.FOCUS_NONE
 	button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+
+
+## The rest of what the dialog has (#194): name, language, drivetrain and the HUD's layout.
+func _more_rows(profile: Dictionary) -> Array[Array]:
+	var language: String = tr("System language")
+	var chosen: String = profile.get("language", "")
+	for entry: Array in ProfileDialog.LANGUAGES:
+		var code: String = entry[0]
+		var language_name: String = entry[1]
+		if code == chosen and not code.is_empty():
+			language = language_name
+	var single_cog: bool = profile.get("drivetrain", "cassette") == "single_cog"
+	var captions: Dictionary[String, String] = {}
+	for metric: Dictionary in TorqaApp.hud_metrics():
+		var id: String = metric["id"]
+		var caption: String = metric["caption"]
+		captions[id] = tr(caption)
+	var hud: PackedStringArray = PackedStringArray()
+	var layout: PackedStringArray = (
+		_torqa.hud_layout() if _torqa != null else TorqaApp.hud_default_layout()
+	)
+	for id: String in layout:
+		var shown: String = captions.get(id, id)
+		hud.append(shown)
+	# i18n-begin
+	var rows: Array[Array] = [
+		["Name", profile.get("name", "")],
+		["Language", language],
+		[
+			"Drivetrain",
+			"Single cog: virtual gears" if single_cog else "Cassette: shift on the bike"
+		],
+	]
+	# i18n-end
+	if single_cog:
+		var chainring: int = profile.get("chainring", 50)
+		var cog: int = profile.get("cog", 14)
+		rows.append(["Chainring", "%d T" % chainring])
+		rows.append(["Cog", "%d T" % cog])
+	rows.append(["HUD", " · ".join(hud)])
+	return rows
