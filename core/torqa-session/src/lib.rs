@@ -190,6 +190,12 @@ impl Ride {
         self.control_update()
     }
 
+    /// Has the trainer told its gradient or power again on the next tick: after a pause it
+    /// was freed of its resistance, so the last control sent no longer holds.
+    pub fn resend_control(&mut self) {
+        self.last_control = None;
+    }
+
     /// Changes trainer difficulty and descent mode during the ride (R48); the trainer gets the
     /// new gradient on the next tick rather than at the next regular update.
     pub fn adjust(&mut self, difficulty: Percent, descent: DescentMode) {

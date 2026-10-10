@@ -22,6 +22,7 @@ use torqa_domain::files::UsedFiles;
 use torqa_domain::profile::{Drivetrain, Profile};
 use torqa_domain::recording::{RideSummary, Sample};
 use torqa_domain::shifting::{ButtonMap, Control, Shift, ShiftInput};
+use torqa_domain::telemetry::TrainerControl;
 use torqa_domain::units::{Meters, Percent, Watts};
 use torqa_physics::{DescentMode, RiderSetup, VirtualGears};
 use torqa_routes::{Climb, ElevationSource, LocalProjection, Route};
@@ -333,6 +334,8 @@ struct ActiveRide {
     video_watch: VideoWatch,
     /// Ride time per real time, with the fake trainer (#53).
     time_scale: f64,
+    /// Paused by the rider: the clock, the road and the trainer wait.
+    paused: bool,
     /// Sped up or jumped: its times are not real, so it counts towards no records.
     simulated: bool,
 }
@@ -1271,6 +1274,21 @@ impl App {
             .map_err(|e| AppError::Storage(e.to_string()))
     }
 
+    /// Whether the ride view's control bar is folded away to its corner (#189).
+    #[must_use]
+    pub fn ride_bar_folded(&self) -> bool {
+        profiles::ride_bar_folded(&self.data_dir)
+    }
+
+    /// Remembers whether the ride view's control bar is folded away.
+    ///
+    /// # Errors
+    /// [`AppError::Storage`] if it cannot be saved.
+    pub fn set_ride_bar_folded(&mut self, folded: bool) -> Result<(), AppError> {
+        profiles::set_ride_bar_folded(&self.data_dir, folded)
+            .map_err(|e| AppError::Storage(e.to_string()))
+    }
+
     /// Whether rides are simulated: with the fake trainer, which can be sped up and jumped
     /// along the route (#53).
     #[must_use]
@@ -1690,8 +1708,38 @@ impl App {
                 reported: false,
             },
             time_scale: 1.0,
+            paused: false,
             simulated: false,
         });
+    }
+
+    /// Pauses or resumes the ride: paused, the clock, the road and the samples wait, and the
+    /// trainer is freed of its resistance; resumed, it gets its gradient or power back on the
+    /// next tick. Returns whether the ride is paused afterwards.
+    pub fn set_paused(&mut self, paused: bool) -> bool {
+        let Some(active) = &mut self.ride else {
+            return false;
+        };
+        if active.finished || active.paused == paused {
+            return active.paused;
+        }
+        active.paused = paused;
+        if paused {
+            if let Some(trainer) = &self.trainer
+                && let Err(error) = trainer.try_control(TrainerControl::Resistance(Percent(0.0)))
+            {
+                warn!(%error, "cannot free the trainer");
+            }
+        } else {
+            active.ride.resend_control();
+        }
+        paused
+    }
+
+    /// Whether the ride is paused.
+    #[must_use]
+    pub fn is_paused(&self) -> bool {
+        self.ride.as_ref().is_some_and(|active| active.paused)
     }
 
     /// Changes trainer difficulty and descent mode of the current ride (R48).
@@ -2081,6 +2129,7 @@ impl App {
         if let Some(active) = &mut self.ride
             && active.started.is_some()
             && !active.finished
+            && !active.paused
         {
             // Sped up, the ride advances in small steps all the same, so its physics and
             // one-second samples stay as exact as at real speed.
@@ -2623,6 +2672,46 @@ mod tests {
         assert_eq!(summary.name, "Test loop");
         assert!((summary.length - 400.0).abs() < 1.0);
         assert!(app.route().is_some());
+    }
+
+    #[test]
+    fn a_paused_ride_waits_and_goes_on_where_it_was() {
+        let dir = temp_dir("pause");
+        let mut app = App::new(dir.join("data"), dir.join("cache")).unwrap();
+        app.load_route(write_route(&dir), true);
+        run_until(&mut app, |e| matches!(e, AppEvent::RouteLoaded(_)));
+        app.connect_trainer(TrainerChoice::Fake(FakeRider {
+            power: Watts(250.0),
+            cadence: Rpm(90.0),
+            heart: None,
+        }))
+        .unwrap();
+        run_until(&mut app, |e| matches!(e, AppEvent::Connected(_)));
+        app.start_ride(Percent(50.0), DescentMode::Coast, &GhostChoice::None)
+            .unwrap();
+        let ride = |app: &mut App, frames: usize| {
+            for _ in 0..frames {
+                std::thread::sleep(Duration::from_millis(16));
+                app.update(Duration::from_millis(16));
+            }
+            app.ride_state().unwrap()
+        };
+        let before = ride(&mut app, 60);
+        assert!(before.distance.0 > 1.0, "{before:?}");
+
+        // Paused, nothing moves and the clock stands...
+        assert!(app.set_paused(true));
+        assert!(app.is_paused());
+        let paused = ride(&mut app, 30);
+        assert_eq!(paused.distance, before.distance);
+        assert_eq!(paused.elapsed, before.elapsed);
+        // ...resumed, the ride goes on from there.
+        assert!(!app.set_paused(false));
+        assert!(!app.is_paused());
+        let after = ride(&mut app, 30);
+        assert!(after.distance.0 > paused.distance.0, "{after:?}");
+        assert!(after.elapsed > paused.elapsed);
+        app.shutdown();
     }
 
     #[test]

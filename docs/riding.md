@@ -12,9 +12,12 @@ makes that one the remembered device.
 
 The ride screen keeps the road in view — the 3D world, or the video on video courses
 ([video.md](video.md)): your figures on the left, map, elevation profile, climb
-and ghost panels on the right, and the **Settings** button (or key **S**). **Overlay** (or **O**)
-shrinks Torqa to just your figures on top of other windows, e.g. to watch a video while you
-ride ([overlay.md](overlay.md)).
+and ghost panels on the right, and a slim bar of controls at the bottom left, each with a
+tooltip: **Settings** (or key **S**), **Overlay** (or **O**), which shrinks Torqa to just your
+figures on top of other windows, e.g. to watch a video while you ride
+([overlay.md](overlay.md)), and on simulated rides the speeds. The chevron at the bar's left
+folds it away to the corner and brings it back; Torqa remembers that, and the keys work either
+way.
 
 **Settings** opens the ride settings; changes apply at once and the ride keeps going:
 
@@ -29,7 +32,7 @@ ride ([overlay.md](overlay.md)).
   [history.md](history.md)).
 - **Abort without saving** ends the ride after asking once; nothing is saved.
 
-Keys: **C** switches the camera, **S** opens the settings, **O** the overlay, **↑** / **↓**
+Keys: **P** (or space) pauses the ride and goes on with it, the clock, the rider and the trainer waiting; **C** switches the camera, **S** opens the settings, **O** the overlay, **↑** / **↓**
 shift the virtual gears, **M** / **.** / **,** control your music ([audio.md](audio.md)).
 
 ### Virtual gears
