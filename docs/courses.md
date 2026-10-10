@@ -38,8 +38,9 @@ when you hover over it. The data directory may live in a synced folder.
 
 ## Video courses
 
-Courses ridden along a video refer to the video rather than containing it; keep the video next
-to the `.tqc` file when moving or sharing them ([video.md](video.md)).
+Courses ridden along a video refer to the video rather than containing it. Torqa keeps a copy
+of the video (a hard link on the same disk) next to the `.tqc` in the library when the course
+is prepared; keep the two together when moving or sharing them ([video.md](video.md)).
 
 ## Size and attribution
 

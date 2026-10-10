@@ -49,6 +49,13 @@ const OFF_ROAD_DETOUR: f64 = 6.0;
 /// Vertices of different roads this close to each other are one place: OpenStreetMap ways
 /// share nodes at junctions, and pieces of a way from neighbouring tiles share their ends.
 const JOIN_M: f64 = 1.0;
+/// Where the matched line turns back on itself by more than this (degrees) within `FOLD_M`, it
+/// has stepped back to a junction a few metres behind a matched point, or forward past the
+/// next: a fold no rider rides, taken out (#172). Smoothing goes by points, so a fold's short
+/// chord would carry a whole step's rise and read as a wall. Off the map the file's points
+/// stay as recorded: a turn back on the spot there is the rider's (#101).
+const FOLD_TURN: f64 = 150.0;
+const FOLD_M: f64 = 5.0;
 
 /// Points of the finished line are at most this far apart...
 const STEP_M: f64 = 5.0;
@@ -182,6 +189,7 @@ pub(crate) fn to_roads(track: &[RawPoint], roads: &[Road]) -> Snapped {
             on_road: matches[i].is_some(),
         });
     }
+    remove_folds(&mut nodes);
     let mut nodes = densify(&nodes);
     straighten_excursions(&mut nodes);
     let nodes = smooth(&nodes);
@@ -702,6 +710,32 @@ fn heading(positions: &[(f64, f64)], i: usize) -> Option<(f64, f64)> {
     (length > 0.5).then(|| (dx / length, dy / length))
 }
 
+/// Takes out the matched points where the line turns back on itself within a few metres (see
+/// `FOLD_TURN`), as often as it takes.
+fn remove_folds(nodes: &mut Vec<Node>) {
+    let folds = |nodes: &[Node], i: usize| {
+        if !nodes[i].on_road {
+            return false;
+        }
+        let (a, b, c) = (nodes[i - 1].at, nodes[i].at, nodes[i + 1].at);
+        let (ab, bc) = (distance(a, b), distance(b, c));
+        if ab.min(bc) >= FOLD_M || ab < 1e-9 || bc < 1e-9 {
+            return false;
+        }
+        let dot = (b.0 - a.0) * (c.0 - b.0) + (b.1 - a.1) * (c.1 - b.1);
+        (dot / (ab * bc)).clamp(-1.0, 1.0).acos().to_degrees() > FOLD_TURN
+    };
+    let mut i = 1;
+    while i + 1 < nodes.len() {
+        if folds(nodes, i) {
+            nodes.remove(i);
+            i = i.saturating_sub(1).max(1);
+        } else {
+            i += 1;
+        }
+    }
+}
+
 /// The line with points inserted so that, along roads, none are more than `STEP_M` apart.
 /// Between points off road the line is not the road ridden (sparse files cut corners), so
 /// nothing is added there: elevations along it are interpolated rather than taken from the
@@ -1074,6 +1108,32 @@ mod tests {
             assert!((x.hypot(*y) - 200.0).abs() < 2.5, "off the road: {x}, {y}");
         }
         assert!((length(&snapped) - std::f64::consts::PI * 200.0).abs() < 5.0);
+    }
+
+    #[test]
+    fn a_junction_just_behind_the_match_is_no_fold() {
+        // #172: the last point before a tunnel lies 3 m past the junction into it; the way
+        // goes on into the tunnel from there, not back to the junction and on.
+        let roads = [
+            road(&[(0.0, -100.0), (0.0, 200.0), (0.0, 500.0)]),
+            tunnel(&[(0.0, 200.0), (300.0, 200.0)]),
+            road(&[(300.0, 200.0), (600.0, 200.0)]),
+        ];
+        let track = [
+            point(0.0, 0.0),
+            point(0.0, 100.0),
+            point(0.0, 203.0),
+            point(350.0, 200.0),
+            point(400.0, 200.0),
+        ];
+
+        let line = xy(&to_roads(&track, &roads).track);
+
+        assert!(
+            sharpest_turn(&line) < 100.0,
+            "a fold of {}°",
+            sharpest_turn(&line)
+        );
     }
 
     #[test]

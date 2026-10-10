@@ -173,6 +173,18 @@ messages). `./torqa-cli workout builtins` lists the built-in workouts and
 saved as a FIT file like a route ride, as indoor cycling without positions. `--mass`,
 `--output` and (for constant power only) `--time-scale` apply as for routes.
 
+## Check a video
+
+```sh
+./torqa-cli video my-ride.mp4                 # how the video keeps up on this machine
+./torqa-cli video my-ride.mp4 --seconds 20
+```
+
+Plays the video against the clock for eight seconds, as a ride at 1× does, and reports the
+frames shown per second, the longest wait for a frame and the straight decoding rate, with a
+verdict. A video that cannot keep up here stutters in the app too; see [video.md](video.md)
+on sizes and codecs.
+
 ## Connection
 
 If the trainer drops out, the CLI reconnects automatically and re-applies the last command.

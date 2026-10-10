@@ -29,6 +29,22 @@ const SPACING: f64 = 10.0;
 const TERRAIN_SMOOTHING: f64 = 40.0;
 /// Moving-average window for recorded elevations, which are noisy (GPS, barometer drift).
 const GPX_SMOOTHING: f64 = 100.0;
+/// A rise or fall the terrain model has along the road that no road climbs (#172): a road on
+/// a ledge or in a gallery the map does not know, where a 30 m terrain cell straddles the cliff
+/// above. A stretch rising steeper than this and falling as steeply back to where it started
+/// within `SPIKE_WIDTH` is a spike, and is cut straight across; a real climb, however steep,
+/// goes on and is kept, and so is a hill the road rolls over gently on one side.
+const SPIKE_GRADE: f64 = 0.18;
+const SPIKE_WIDTH: f64 = 400.0;
+/// Where the terrain model departs from the file's own elevations by more than this, beyond
+/// the offset between the two along the stretch, the model is wrong there and the file wins:
+/// a planner's profile is corrected already, and a recorder's barometer drifts by metres, never
+/// by a cliff (#172)...
+const FILE_DISAGREEMENT: f64 = 30.0;
+/// ...the offset taken as the median of their difference over this far either side...
+const FILE_OFFSET_REACH: f64 = 500.0;
+/// ...and the model wrong out to where it agrees with the file again, within this.
+const FILE_AGREEMENT: f64 = 5.0;
 const EARTH_RADIUS: f64 = 6_371_000.0;
 /// How far either side of a position the curve is looked at for its direction and bend: short
 /// against the 10 m between points, long enough to be steady.
@@ -195,6 +211,8 @@ impl Route {
         let key = key_of(&resample(&recorded)?);
         let snapped = snap::to_roads(&recorded, &map.roads);
         let mut track = dedup(snapped.track);
+        // The file's own elevations, kept beside the model's to check it against (#172).
+        let file_track = track.clone();
 
         // The model is sampled only at the file's points, which lie on the road. Between
         // sparse points a straight line can cut across a hillside, so elevations there are
@@ -221,15 +239,24 @@ impl Route {
         let mut surfaces = structures::surfaces(&points, &snapped.structures);
         structures::keep_real(&points, &mut surfaces, source == ElevationSource::Terrain);
         structures::bridge_elevations(&mut points, &surfaces);
+        let file_elevations: Vec<Option<f64>> = if source == ElevationSource::Terrain {
+            resample(&file_track)?.iter().map(|p| p.elevation).collect()
+        } else {
+            Vec::new()
+        };
 
         let window = match source {
             ElevationSource::Terrain => TERRAIN_SMOOTHING,
             ElevationSource::File => GPX_SMOOTHING,
         };
-        let raw: Vec<f64> = points
+        let mut raw: Vec<f64> = points
             .iter()
             .map(|p| p.elevation.unwrap_or_default())
             .collect();
+        if source == ElevationSource::Terrain {
+            trust_the_file_where_the_model_jumps(&mut raw, &file_elevations);
+            cut_spikes(&mut raw);
+        }
         let mut smoothed = smooth(&raw, window);
         passes::join(&points, &surfaces, &mut smoothed);
 
@@ -582,6 +609,111 @@ fn fill_gaps(points: &mut [RawPoint]) -> bool {
     true
 }
 
+/// Cuts the terrain model's spikes along the road (#172): where the profile rises steeper than
+/// `SPIKE_GRADE` and falls back as steeply to its starting level within `SPIKE_WIDTH`, or dips
+/// and climbs back the same way, the stretch is drawn straight across from where it left the
+/// level to where it returned. A climb that goes on is reachable at road grades and stays,
+/// however steep; so does a knoll the road leaves gently on one side.
+fn cut_spikes(values: &mut [f64]) {
+    let room = SPIKE_GRADE * SPACING;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a positive count
+    let width = (SPIKE_WIDTH / SPACING).round() as usize;
+    let mut i = 0;
+    while i + 1 < values.len() {
+        let step = values[i + 1] - values[i];
+        if step.abs() <= room {
+            i += 1;
+            continue;
+        }
+        // Up or down a flank too steep for a road: look for the way back to this level, as
+        // steep somewhere on the way, within the width of a spike.
+        let sign = step.signum();
+        let mut steep_back = false;
+        let mut returned = None;
+        for j in i + 2..=(i + width).min(values.len() - 1) {
+            if sign * (values[j - 1] - values[j]) > room {
+                steep_back = true;
+            }
+            if sign * (values[j] - values[i]) <= room {
+                returned = steep_back.then_some(j);
+                break;
+            }
+        }
+        let Some(j) = returned else {
+            i += 1;
+            continue;
+        };
+        let (from, to) = (values[i], values[j]);
+        #[allow(clippy::cast_precision_loss)] // a few dozen samples
+        let span = (j - i) as f64;
+        for (k, value) in values[i..=j].iter_mut().enumerate() {
+            #[allow(clippy::cast_precision_loss)]
+            let t = k as f64 / span;
+            *value = from + (to - from) * t;
+        }
+        i = j;
+    }
+}
+
+/// Where the model's `values` depart from the `file`'s elevations by more than
+/// `FILE_DISAGREEMENT`, beyond the offset between the two along the stretch (the median of
+/// their difference over `FILE_OFFSET_REACH` either side), the model is wrong there: the whole
+/// departure, out to where the two agree again within `FILE_AGREEMENT`, takes the file's
+/// elevation plus that offset instead (#172). Nothing changes without file elevations.
+fn trust_the_file_where_the_model_jumps(values: &mut [f64], file: &[Option<f64>]) {
+    if file.len() != values.len() || file.iter().filter(|e| e.is_some()).count() < 2 {
+        return;
+    }
+    let differences: Vec<Option<f64>> = values
+        .iter()
+        .zip(file)
+        .map(|(model, file)| file.map(|f| model - f))
+        .collect();
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a positive count
+    let reach = (FILE_OFFSET_REACH / SPACING).round() as usize;
+    // Each sample's departure from the offset along its stretch; none without a file value.
+    let departures: Vec<Option<f64>> = (0..values.len())
+        .map(|i| {
+            let own = differences[i]?;
+            let mut nearby: Vec<f64> = differences
+                [i.saturating_sub(reach)..(i + reach + 1).min(differences.len())]
+                .iter()
+                .flatten()
+                .copied()
+                .collect();
+            nearby.sort_by(f64::total_cmp);
+            Some(own - nearby[nearby.len() / 2])
+        })
+        .collect();
+    let departs = |i: usize, by: f64| departures[i].is_some_and(|d| d.abs() > by);
+    let mut wrong = vec![false; values.len()];
+    for i in 0..values.len() {
+        if !departs(i, FILE_DISAGREEMENT) {
+            continue;
+        }
+        wrong[i] = true;
+        // Out to where the model and the file agree again.
+        let mut k = i;
+        while k > 0 && departs(k - 1, FILE_AGREEMENT) {
+            k -= 1;
+            wrong[k] = true;
+        }
+        let mut k = i;
+        while k + 1 < values.len() && departs(k + 1, FILE_AGREEMENT) {
+            k += 1;
+            wrong[k] = true;
+        }
+    }
+    for i in 0..values.len() {
+        if wrong[i]
+            && let Some(departure) = departures[i]
+        {
+            // The file's elevation at the offset: the model less its departure.
+            values[i] -= departure;
+        }
+    }
+}
+
 /// Smooths evenly spaced samples with two passes of a centred moving average over `window`
 /// metres, which approximates a Gaussian and leaves far less ripple than a single pass.
 fn smooth(values: &[f64], window: f64) -> Vec<f64> {
@@ -734,6 +866,31 @@ mod tests {
             route.length()
         );
         assert_eq!(route.elevation_source(), ElevationSource::File);
+    }
+
+    #[tokio::test]
+    async fn the_reference_route_reads_as_its_planner_wrote_it() {
+        // #167: the Oberalp fixture by the planner's own elevations, without tiles.
+        let xml = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/oberalp.gpx"
+        ))
+        .unwrap();
+        let route = Route::from_gpx(&xml, None).await.unwrap();
+
+        assert_eq!(route.name(), Some("Oberalp"));
+        assert!(
+            (33_400.0..33_900.0).contains(&route.length().0),
+            "{}",
+            route.length().0
+        );
+        // Andermatt 1435 m to the pass at 2044 m and down to Disentis at 1130 m.
+        let gain = route.elevation_gain().0;
+        assert!((580.0..760.0).contains(&gain), "gain {gain}");
+        assert_eq!(route.elevation_source(), ElevationSource::File);
+        // Without the map the planner's chords through the tunnels stay, and the grades
+        // along them say nothing: `the_reference_route_follows_the_map_at_road_grades` in
+        // torqa-app checks those against the cached tiles.
     }
 
     #[tokio::test]
@@ -954,6 +1111,123 @@ mod tests {
             let t = ((lat - 46.0) / 0.009).clamp(0.0, 1.0);
             std::future::ready(Ok(500.0 + 200.0 * (t * std::f64::consts::PI).sin()))
         }
+    }
+
+    /// Flat land at 500 m with a 100 m spike over 200 m of it, from 400 m to 600 m north, as a
+    /// terrain cell straddling a cliff above a road on a ledge gives (#172).
+    struct Spike;
+
+    impl ElevationModel for Spike {
+        fn elevation(
+            &mut self,
+            lat: f64,
+            _lon: f64,
+        ) -> impl std::future::Future<Output = Result<f64, String>> + Send {
+            let north = (lat - 46.0) * EARTH_RADIUS.to_radians();
+            let bump = (1.0 - (north - 500.0).abs() / 100.0).max(0.0);
+            std::future::ready(Ok(500.0 + 100.0 * bump))
+        }
+    }
+
+    /// A real hill: 80 m up over 1 km and down again, 8 % either side.
+    struct Hill;
+
+    impl ElevationModel for Hill {
+        fn elevation(
+            &mut self,
+            lat: f64,
+            _lon: f64,
+        ) -> impl std::future::Future<Output = Result<f64, String>> + Send {
+            let north = (lat - 46.0) * EARTH_RADIUS.to_radians();
+            let rise = (1.0 - (north - 1000.0).abs() / 1000.0).max(0.0);
+            std::future::ready(Ok(500.0 + 80.0 * rise))
+        }
+    }
+
+    #[test]
+    fn cut_spikes_leaves_a_tent_at_the_road_grade() {
+        // Flat at 500 m, a spike 100 m high over ten samples either side (100 % grades).
+        let mut values: Vec<f64> = (0..41)
+            .map(|i| 500.0 + 100.0 * (1.0 - f64::from((i - 20i32).abs()) / 10.0).max(0.0))
+            .collect();
+        cut_spikes(&mut values);
+        let top = values.iter().copied().fold(f64::MIN, f64::max);
+        assert!((top - 500.0).abs() < 0.01, "top {top}: {values:?}");
+        // A climb of 50 % going on is kept.
+        let mut climb: Vec<f64> = (0..41).map(|i| 500.0 + 5.0 * f64::from(i)).collect();
+        let before = climb.clone();
+        cut_spikes(&mut climb);
+        assert_eq!(climb, before);
+    }
+
+    #[tokio::test]
+    async fn a_spike_in_the_terrain_is_cut_to_a_road_grade() {
+        // No elevations in the file: the spike's shape alone gives it away.
+        let elevations: Vec<Option<f64>> = vec![None; 101];
+        let route = Route::from_gpx_with(
+            &gpx_north(&elevations, 10.0),
+            Some(&mut Spike),
+            &MapData::default(),
+        )
+        .await
+        .unwrap();
+
+        let top = route
+            .points()
+            .iter()
+            .map(|p| p.elevation.0)
+            .fold(f64::MIN, f64::max);
+        assert!(top < 505.0, "the spike still stands {top} m high");
+        assert!(
+            route.max_grade().0 < 5.0,
+            "steepest {} %",
+            route.max_grade().0
+        );
+        assert!(
+            route.elevation_gain().0 < 5.0,
+            "{}",
+            route.elevation_gain().0
+        );
+    }
+
+    #[tokio::test]
+    async fn the_file_corrects_the_model_where_it_jumps() {
+        // The planner's file has the road flat, 40 m under the model's level: an offset, not a
+        // spike. Where the model jumps, the file wins, offset and all.
+        let elevations: Vec<Option<f64>> = vec![Some(460.0); 101];
+        let route = Route::from_gpx_with(
+            &gpx_north(&elevations, 10.0),
+            Some(&mut Spike),
+            &MapData::default(),
+        )
+        .await
+        .unwrap();
+
+        for point in route.points() {
+            assert!((point.elevation.0 - 500.0).abs() < 6.0, "{point:?}");
+        }
+        assert!(
+            route.elevation_gain().0 < 6.0,
+            "{}",
+            route.elevation_gain().0
+        );
+    }
+
+    #[tokio::test]
+    async fn a_real_hill_is_kept_whole() {
+        let elevations: Vec<Option<f64>> = vec![None; 201];
+        let route = Route::from_gpx_with(
+            &gpx_north(&elevations, 10.0),
+            Some(&mut Hill),
+            &MapData::default(),
+        )
+        .await
+        .unwrap();
+
+        let gain = route.elevation_gain().0;
+        assert!((76.0..81.0).contains(&gain), "gain {gain}");
+        let steepest = route.max_grade().0;
+        assert!((7.0..8.5).contains(&steepest), "steepest {steepest}");
     }
 
     #[tokio::test]

@@ -293,3 +293,41 @@ fn deeper_av1_videos_play_too() {
         colour(frame)
     );
 }
+
+#[test]
+fn pictures_passed_over_on_the_way_to_a_frame_are_not_converted() {
+    // Playback behind the clock skips ahead: decoding the pictures between is unavoidable,
+    // scaling them to the screen is not.
+    let path = test_video("skip", 160, 96);
+    let mut video = Video::open(&path).unwrap();
+    let first = video.frame_at(Duration::from_millis(50)).unwrap().time;
+    let later = video.frame_at(Duration::from_millis(2050)).unwrap().time;
+    assert!(
+        later > first + Duration::from_secs(1),
+        "{first:?} -> {later:?}"
+    );
+    assert_eq!(video.converted, 2);
+    std::fs::remove_file(path).unwrap();
+}
+
+/// Plays a real video as a ride at 1× would and reports how it keeps up, like `torqa-cli
+/// video`: `TORQA_VIDEO=<file> cargo test -p torqa-video --release -- --ignored real_video
+/// --nocapture`.
+#[test]
+#[ignore = "needs a real video in TORQA_VIDEO"]
+fn a_real_video_keeps_up_with_the_clock() {
+    let path = std::env::var("TORQA_VIDEO").expect("TORQA_VIDEO");
+    let report = benchmark(Path::new(&path), 8).unwrap();
+    println!(
+        "{:?}\n{} frames in {:.1} s ({:.1}/s), longest wait {:.2} s, median {:.3} s\nstraight decoding: {:.1} frames/s, keeps up: {}",
+        report.info,
+        report.delivered,
+        report.played.as_secs_f64(),
+        report.delivered_per_second(),
+        report.longest_wait.as_secs_f64(),
+        report.median_wait.as_secs_f64(),
+        report.straight_per_second,
+        report.keeps_up()
+    );
+    assert!(report.keeps_up(), "{report:?}");
+}

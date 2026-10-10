@@ -523,8 +523,6 @@ msgstr "Fahrt"
 msgid "Ride settings"
 msgstr "Fahrt-Einstellungen"
 
-msgid "Settings"
-msgstr "Einstellungen"
 
 msgid "The ride ends and nothing is saved."
 msgstr "Die Fahrt endet, nichts wird gespeichert."
@@ -860,8 +858,6 @@ msgstr "Strecke wird geladen"
 msgid "for %d bpm  ·  now %s"
 msgstr "für %d bpm  ·  jetzt %s"
 
-msgid "Overlay"
-msgstr "Overlay"
 
 msgid "Full view"
 msgstr "Ganze Ansicht"
@@ -1138,3 +1134,44 @@ msgstr "Nächste Kamera"
 
 msgid "Overlay on / off"
 msgstr "Overlay ein / aus"
+
+msgid "Zones"
+msgstr "Zonen"
+
+msgid "Power zones, the top of each as a share of FTP"
+msgstr "Leistungszonen, die Obergrenze jeder als Anteil der FTP"
+
+msgid "Heart-rate zones, the top of each as a share of the maximum heart rate"
+msgstr "Pulszonen, die Obergrenze jeder als Anteil des Maximalpulses"
+
+msgid "Standard zones"
+msgstr "Standardzonen"
+
+msgid "Coggan's power zones and the usual heart-rate zones"
+msgstr "Coggans Leistungszonen und die üblichen Pulszonen"
+
+msgid "and above"
+msgstr "und darüber"
+
+msgid "Pause"
+msgstr "Pause"
+
+msgid "Resume"
+msgstr "Weiter"
+
+msgid "Paused"
+msgstr "Pausiert"
+
+msgid "Pause the ride: the clock and the trainer wait (P)"
+msgstr "Fahrt pausieren: Uhr und Trainer warten (P)"
+
+msgid "Pause the ride (P)"
+msgstr "Fahrt pausieren (P)"
+msgid "Show the controls"
+msgstr "Steuerung einblenden"
+
+msgid "Fold the controls away"
+msgstr "Steuerung ausblenden"
+
+msgid "Simulation speed"
+msgstr "Simulationsgeschwindigkeit"

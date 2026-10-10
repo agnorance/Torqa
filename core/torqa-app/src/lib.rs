@@ -22,6 +22,7 @@ use torqa_domain::files::UsedFiles;
 use torqa_domain::profile::{Drivetrain, Profile};
 use torqa_domain::recording::{RideSummary, Sample};
 use torqa_domain::shifting::{ButtonMap, Control, Shift, ShiftInput};
+use torqa_domain::telemetry::TrainerControl;
 use torqa_domain::units::{Meters, Percent, Watts};
 use torqa_physics::{DescentMode, RiderSetup, VirtualGears};
 use torqa_routes::{Climb, ElevationSource, LocalProjection, Route};
@@ -285,6 +286,8 @@ enum JobResult {
     CourseAdded(Result<PathBuf, String>),
     /// The loaded route was saved as this course.
     CourseSaved(Result<PathBuf, String>),
+    /// The course at the first path has its own copy of its video at the second (#165).
+    VideoKept(PathBuf, PathBuf),
     Failed(String),
 }
 
@@ -331,6 +334,8 @@ struct ActiveRide {
     video_watch: VideoWatch,
     /// Ride time per real time, with the fake trainer (#53).
     time_scale: f64,
+    /// Paused by the rider: the clock, the road and the trainer wait.
+    paused: bool,
     /// Sped up or jumped: its times are not real, so it counts towards no records.
     simulated: bool,
 }
@@ -739,9 +744,21 @@ impl App {
         };
         let added = video::VideoCourse::new(route, &source).map_err(AppError::Video)?;
         let reference = video_reference(&added, route);
-        update_manifest(path, |manifest| manifest.video = Some(reference))?;
+        let (size, course) = (reference.size, path.clone());
+        update_manifest(&course, |manifest| manifest.video = Some(reference))?;
         self.video = Some(added);
         self.view = View::Video;
+        // The course's own copy of the video, beside it, follows in the background: a copy
+        // across disks takes a while (#165). The course refers to the original until then;
+        // the course file is changed from the frame loop only, like every other change to it.
+        let video = video.to_owned();
+        let tx = self.jobs_tx.clone();
+        self.runtime.spawn_blocking(move || {
+            let _ = tx.send(match course::keep_video(&video, &course, size) {
+                Ok(kept) => JobResult::VideoKept(course, kept),
+                Err(e) => JobResult::Failed(format!("cannot keep the video with the course: {e}")),
+            });
+        });
         Ok(())
     }
 
@@ -969,6 +986,17 @@ impl App {
                 .and_then(|()| {
                     let path =
                         replacing.unwrap_or_else(|| unique_course_path(&library, &manifest.name));
+                    // The course's own copy of its video, beside it: the course is ridden long
+                    // after the file it was imported from is moved or gone (#165).
+                    let mut manifest = manifest;
+                    if let Some(video) = &mut manifest.video {
+                        let kept = course::keep_video(Path::new(&video.path), &path, video.size)?;
+                        video.file_name = kept
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        video.path = kept.display().to_string();
+                    }
                     // Written aside first: a replaced course stays whole if writing fails.
                     let partial = path.with_extension("part");
                     course::write(&partial, &manifest, &gpx, &cache, &data)?;
@@ -1030,9 +1058,28 @@ impl App {
     /// # Errors
     /// [`AppError::Storage`] if the file cannot be deleted.
     pub fn delete_course(&mut self, path: &Path) -> Result<(), AppError> {
+        // The course's own copy of its video, beside it, goes with it unless another course
+        // rides along the same file (#165); a video elsewhere is the rider's and stays.
+        let video = course::read_manifest(path)
+            .ok()
+            .and_then(|manifest| manifest.video)
+            .and_then(|reference| reference.locate(path))
+            .filter(|video| video.parent() == path.parent());
         std::fs::remove_file(path).map_err(|e| AppError::Storage(e.to_string()))?;
         if self.course.as_deref() == Some(path) {
             self.course = None;
+        }
+        if let Some(video) = video {
+            let shared = self.courses().into_iter().any(|c| {
+                c.manifest
+                    .video
+                    .as_ref()
+                    .and_then(|reference| reference.locate(&c.path))
+                    .is_some_and(|other| other == video)
+            });
+            if !shared && let Err(e) = std::fs::remove_file(&video) {
+                warn!(%e, video = %video.display(), "cannot remove the course's video");
+            }
         }
         Ok(())
     }
@@ -1224,6 +1271,21 @@ impl App {
     /// [`AppError::Storage`] if it cannot be saved.
     pub fn set_overlay_window(&mut self, window: profiles::OverlayWindow) -> Result<(), AppError> {
         profiles::set_overlay_window(&self.data_dir, window)
+            .map_err(|e| AppError::Storage(e.to_string()))
+    }
+
+    /// Whether the ride view's control bar is folded away to its corner (#189).
+    #[must_use]
+    pub fn ride_bar_folded(&self) -> bool {
+        profiles::ride_bar_folded(&self.data_dir)
+    }
+
+    /// Remembers whether the ride view's control bar is folded away.
+    ///
+    /// # Errors
+    /// [`AppError::Storage`] if it cannot be saved.
+    pub fn set_ride_bar_folded(&mut self, folded: bool) -> Result<(), AppError> {
+        profiles::set_ride_bar_folded(&self.data_dir, folded)
             .map_err(|e| AppError::Storage(e.to_string()))
     }
 
@@ -1646,8 +1708,38 @@ impl App {
                 reported: false,
             },
             time_scale: 1.0,
+            paused: false,
             simulated: false,
         });
+    }
+
+    /// Pauses or resumes the ride: paused, the clock, the road and the samples wait, and the
+    /// trainer is freed of its resistance; resumed, it gets its gradient or power back on the
+    /// next tick. Returns whether the ride is paused afterwards.
+    pub fn set_paused(&mut self, paused: bool) -> bool {
+        let Some(active) = &mut self.ride else {
+            return false;
+        };
+        if active.finished || active.paused == paused {
+            return active.paused;
+        }
+        active.paused = paused;
+        if paused {
+            if let Some(trainer) = &self.trainer
+                && let Err(error) = trainer.try_control(TrainerControl::Resistance(Percent(0.0)))
+            {
+                warn!(%error, "cannot free the trainer");
+            }
+        } else {
+            active.ride.resend_control();
+        }
+        paused
+    }
+
+    /// Whether the ride is paused.
+    #[must_use]
+    pub fn is_paused(&self) -> bool {
+        self.ride.as_ref().is_some_and(|active| active.paused)
     }
 
     /// Changes trainer difficulty and descent mode of the current ride (R48).
@@ -2037,6 +2129,7 @@ impl App {
         if let Some(active) = &mut self.ride
             && active.started.is_some()
             && !active.finished
+            && !active.paused
         {
             // Sped up, the ride advances in small steps all the same, so its physics and
             // one-second samples stay as exact as at real speed.
@@ -2239,6 +2332,11 @@ impl App {
                 JobResult::Scan(Err(message)) if std::mem::take(&mut self.reconnecting) => {
                     // No Bluetooth (or no permission): the rider sees it when scanning.
                     warn!(%message, "cannot reconnect the devices used last");
+                }
+                JobResult::VideoKept(course, kept) => {
+                    if let Err(e) = refer_to_kept_video(&course, &kept) {
+                        events.push(AppEvent::Error(e.to_string()));
+                    }
                 }
                 JobResult::Scan(Err(message))
                 | JobResult::Route(_, Err(message))
@@ -2445,6 +2543,20 @@ fn video_marks(reference: &course::VideoReference) -> Vec<SyncMark> {
 }
 
 /// Changes the manifest of the course file at `path`.
+/// Points the course at `path` to its own copy of its video at `kept` (#165); a course whose
+/// video was taken off in the meantime stays as it is.
+fn refer_to_kept_video(path: &Path, kept: &Path) -> Result<(), AppError> {
+    update_manifest(path, |manifest| {
+        if let Some(video) = &mut manifest.video {
+            video.file_name = kept
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            video.path = kept.display().to_string();
+        }
+    })
+}
+
 fn update_manifest(path: &Path, change: impl FnOnce(&mut Manifest)) -> Result<(), AppError> {
     let storage = |e: course::CourseError| AppError::Storage(e.to_string());
     let mut manifest = course::read_manifest(path).map_err(storage)?;
@@ -2560,6 +2672,80 @@ mod tests {
         assert_eq!(summary.name, "Test loop");
         assert!((summary.length - 400.0).abs() < 1.0);
         assert!(app.route().is_some());
+    }
+
+    /// The reference route (#167) imported as a rider would, from the map and terrain tiles in
+    /// the cache: run `torqa-cli route core/fixtures/oberalp.gpx` once online, then
+    /// `cargo test -p torqa-app -- --ignored reference_route`.
+    #[test]
+    #[ignore = "needs the Oberalp's map and terrain tiles in the cache"]
+    fn the_reference_route_follows_the_map_at_road_grades() {
+        let dir = temp_dir("reference-route");
+        let mut app = App::new(dir.join("data"), paths::cache_dir()).unwrap();
+        let fixture = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/oberalp.gpx"
+        ));
+        app.load_route(fixture, true);
+        run_until(&mut app, |e| matches!(e, AppEvent::RouteLoaded(_)));
+        let route = app.route().expect("the route");
+
+        assert_eq!(route.elevation_source(), ElevationSource::Terrain);
+        assert!(
+            (33_000.0..33_900.0).contains(&route.length().0),
+            "{}",
+            route.length().0
+        );
+        // The planner drew the road through the Oberalpsee and left the tunnels' insides out:
+        // on the map's roads the route climbs like a pass road, never like a cliff (#166).
+        assert!(
+            route.max_grade().0 < 15.0,
+            "steepest {} %",
+            route.max_grade().0
+        );
+        let gain = route.elevation_gain().0;
+        assert!((550.0..900.0).contains(&gain), "gain {gain}");
+        app.shutdown();
+    }
+
+    #[test]
+    fn a_paused_ride_waits_and_goes_on_where_it_was() {
+        let dir = temp_dir("pause");
+        let mut app = App::new(dir.join("data"), dir.join("cache")).unwrap();
+        app.load_route(write_route(&dir), true);
+        run_until(&mut app, |e| matches!(e, AppEvent::RouteLoaded(_)));
+        app.connect_trainer(TrainerChoice::Fake(FakeRider {
+            power: Watts(250.0),
+            cadence: Rpm(90.0),
+            heart: None,
+        }))
+        .unwrap();
+        run_until(&mut app, |e| matches!(e, AppEvent::Connected(_)));
+        app.start_ride(Percent(50.0), DescentMode::Coast, &GhostChoice::None)
+            .unwrap();
+        let ride = |app: &mut App, frames: usize| {
+            for _ in 0..frames {
+                std::thread::sleep(Duration::from_millis(16));
+                app.update(Duration::from_millis(16));
+            }
+            app.ride_state().unwrap()
+        };
+        let before = ride(&mut app, 60);
+        assert!(before.distance.0 > 1.0, "{before:?}");
+
+        // Paused, nothing moves and the clock stands...
+        assert!(app.set_paused(true));
+        assert!(app.is_paused());
+        let paused = ride(&mut app, 30);
+        assert_eq!(paused.distance, before.distance);
+        assert_eq!(paused.elapsed, before.elapsed);
+        // ...resumed, the ride goes on from there.
+        assert!(!app.set_paused(false));
+        assert!(!app.is_paused());
+        let after = ride(&mut app, 30);
+        assert!(after.distance.0 > paused.distance.0, "{after:?}");
+        assert!(after.elapsed > paused.elapsed);
+        app.shutdown();
     }
 
     #[test]
@@ -3236,13 +3422,15 @@ mod tests {
             panic!("{events:?}")
         };
 
-        // Another machine: the course elsewhere, the video not where it was recorded.
+        // Another machine: the course elsewhere, the video neither where it was recorded nor
+        // in the first machine's library.
         let shared = dir.join("shared");
         let aside = dir.join("aside");
         std::fs::create_dir_all(&shared).unwrap();
         std::fs::create_dir_all(&aside).unwrap();
         std::fs::copy(file, shared.join("gurten.tqc")).unwrap();
         std::fs::rename(&video, aside.join("Gurten.mov")).unwrap();
+        std::fs::remove_file(file.parent().unwrap().join("Gurten.mov")).unwrap();
         let mut other = App::new(dir.join("b/data"), dir.join("b/cache")).unwrap();
         other.open_course(shared.join("gurten.tqc"));
         let events = run_until(&mut other, |e| matches!(e, AppEvent::Error(_)));
@@ -3257,6 +3445,37 @@ mod tests {
         assert_eq!(other.video().unwrap().video, shared.join("Gurten.mov"));
         // Opened, not prepared: nothing is added to that machine's library.
         assert_eq!(other.courses().len(), 0);
+    }
+
+    #[test]
+    fn a_video_course_outlives_the_file_it_was_imported_from() {
+        // #165: the video moved or deleted after the import, the course still rides along it.
+        let dir = temp_dir("video-kept");
+        let video = video_in(&dir, &torqa_video::testing::gopro_video("kept"), "Ride.MOV");
+        let mut app = App::new(dir.join("data"), dir.join("cache")).unwrap();
+        let events = loaded_video(&mut app, video.clone());
+        let Some(AppEvent::CourseAdded(file)) = events.last() else {
+            panic!("{events:?}")
+        };
+        let kept = file.parent().unwrap().join("Ride.MOV");
+        assert!(kept.is_file(), "no copy beside {}", file.display());
+        std::fs::remove_file(&video).unwrap();
+
+        let mut later = App::new(dir.join("data"), dir.join("cache")).unwrap();
+        later.open_course(file.clone());
+        run_until(&mut later, |e| {
+            matches!(e, AppEvent::RouteLoaded(_) | AppEvent::Error(_))
+        });
+
+        assert_eq!(later.video().map(|v| v.video.clone()), Some(kept.clone()));
+
+        // The copy goes with the course, once no course rides along it any more.
+        let twin = file.with_file_name("twin.tqc");
+        std::fs::copy(file, &twin).unwrap();
+        later.delete_course(file).unwrap();
+        assert!(kept.is_file(), "deleted under another course");
+        later.delete_course(&twin).unwrap();
+        assert!(!kept.exists(), "left behind");
     }
 
     #[test]
