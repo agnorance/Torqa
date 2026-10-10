@@ -41,6 +41,12 @@ func _init(rename_tooltip: String = "") -> void:
 	add_child(_button)
 
 
+## Places `button` beside the pencil, on the title's own line, so the two align (#190).
+func add_action(button: Button) -> void:
+	button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	add_child(button)
+
+
 ## Puts the cursor in the title with all of it selected, ready to type a new one.
 func start_editing() -> void:
 	_edit.grab_focus()

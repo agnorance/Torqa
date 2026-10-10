@@ -143,9 +143,9 @@ func _ready() -> void:
 	_delete_button.icon = UiIcons.texture("bin")
 	_delete_button.tooltip_text = tr("Delete ride")
 	_delete_button.focus_mode = Control.FOCUS_NONE
-	_delete_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_delete_button.pressed.connect(_confirm_delete.popup_centered)
-	title_row.add_child(_delete_button)
+	# Beside the pencil, on the title's line, so the two align.
+	_title.add_action(_delete_button)
 	_detail.add_child(title_row)
 	_confirm_delete.title = tr("Delete ride?")
 	_confirm_delete.dialog_text = tr("The ride and its FIT file are deleted.")
