@@ -334,8 +334,11 @@ func _rider_drivetrain() -> void:
 		{"id": "r", "name": "R", "drivetrain": "single_cog", "chainring": 46, "cog": 14},
 		PackedStringArray(["power"])
 	)
-	var spins: Array[Node] = dialog.find_children("*", "SpinBox", true, false)
-	var cog: SpinBox = spins[spins.size() - 1]
+	# The cog is the last of the teeth fields; the zones tab has spin boxes of its own.
+	var teeth: Array[Node] = dialog.find_children("*", "SpinBox", true, false).filter(
+		func(node: Node) -> bool: return (node as SpinBox).suffix == " T"
+	)
+	var cog: SpinBox = teeth[teeth.size() - 1]
 	_check(cog.visible, "chainring and cog for a single cog")
 	dialog.confirmed.emit()
 	var saved: Dictionary = confirmed[0]
