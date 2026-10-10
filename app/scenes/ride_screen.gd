@@ -27,7 +27,6 @@ const TOAST_SECONDS: float = 4.0
 const FRAME_BUDGET_S: float = 1.0 / 60.0 * 1.15
 const SLOW_FOR_S: float = 10.0
 ## Speeds of a simulated ride (#53).
-const TIME_SCALES: Array[float] = [1.0, 2.0, 5.0, 10.0, 20.0]
 const KM_PER_MILE: float = 1.609344
 const METERS_PER_FOOT: float = 0.3048
 ## How often the workout chart is redrawn: samples come once a second.
@@ -55,8 +54,8 @@ var _finished: bool = false
 var _saved: bool = false
 var _toast_left: float = 0.0
 ## Simulated rides (fake trainer): speed, jumps on map and profile, free camera (#53).
-var _simulation: PanelContainer = PanelContainer.new()
-var _speed_buttons: Array[Button] = []
+var _bar: RideBar = RideBar.new()
+var _simulating: bool = false
 ## The workout being ridden (`WorkoutsTab.workout()`), empty on a plain ride.
 var _workout: Dictionary = {}
 var _workout_panel: WorkoutPanel = WorkoutPanel.new()
@@ -85,8 +84,6 @@ var _budget_noted: bool = false
 @onready var _profile_info: Label = %ProfileInfo
 @onready var _toast: PanelContainer = %Toast
 @onready var _toast_label: Label = %ToastLabel
-@onready var _settings_button: Button = %SettingsButton
-@onready var _finish_button: Button = %FinishButton
 
 
 func bind(torqa: TorqaApp, world: RideWorld) -> void:
@@ -114,6 +111,9 @@ func begin(options: Dictionary) -> void:
 	_finish_button.hide()
 	_pause_button.show()
 	_show_paused(false)
+	_bar.show_settings(true)
+	_bar.show_finish("")
+	_bar.folded = _torqa.ride_bar_folded()
 	_workout = options.get("workout", {})
 	var on_its_own: bool = not _workout.is_empty() and not options.get("on_course", false)
 	_backdrop.visible = on_its_own
@@ -147,7 +147,8 @@ func begin(options: Dictionary) -> void:
 		_show_toast(tr("Waiting for the trainer…"))
 	# Workouts are not sped up: a simulated heart beats in real time.
 	var simulating: bool = _torqa.simulating() and _workout.is_empty()
-	_simulation.visible = simulating
+	_simulating = simulating
+	_bar.set_simulating(simulating)
 	_minimap.jumpable = simulating
 	_profile.jumpable = simulating
 	_set_time_scale(1.0)
@@ -167,7 +168,6 @@ func _ready() -> void:
 	_build_workout_panel()
 	_build_climb_panel()
 	_build_ghost_panel()
-	_build_simulation_panel()
 	_minimap.jump_requested.connect(
 		func(position_m: Vector2) -> void: _torqa.jump_near(position_m.x, position_m.y)
 	)
@@ -200,6 +200,16 @@ func _ready() -> void:
 	_pause_button.pressed.connect(_toggle_pause)
 	_overlay_button.add_sibling(_pause_button)
 	_overlay_hud.pause_requested.connect(_toggle_pause)
+	# The controls in one bar at the bottom left (#189); the keys work with it folded too.
+	_bar.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT, Control.PRESET_MODE_MINSIZE, 24)
+	_bar.grow_horizontal = Control.GROW_DIRECTION_END
+	_bar.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_bar.settings_requested.connect(_open_settings)
+	_bar.overlay_requested.connect(func() -> void: overlay_requested.emit(true))
+	_bar.finish_requested.connect(_on_finish_pressed)
+	_bar.speed_chosen.connect(_set_time_scale)
+	_bar.folded_changed.connect(func(folded: bool) -> void: _torqa.set_ride_bar_folded(folded))
+	add_child(_bar)
 	_overlay_hud.hide()
 	_overlay_hud.leave_requested.connect(func() -> void: overlay_requested.emit(false))
 	_overlay_hud.zoom_requested.connect(overlay_zoom_requested.emit)
@@ -235,9 +245,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		_cycle_camera()
 	elif key.keycode == KEY_S and not _finished:
 		_open_settings()
-	elif _simulation.visible and key.keycode in [KEY_EQUAL, KEY_PLUS, KEY_KP_ADD]:
+	elif _simulating and key.keycode in [KEY_EQUAL, KEY_PLUS, KEY_KP_ADD]:
 		_step_time_scale(1)
-	elif _simulation.visible and key.keycode in [KEY_MINUS, KEY_KP_SUBTRACT]:
+	elif _simulating and key.keycode in [KEY_MINUS, KEY_KP_SUBTRACT]:
 		_step_time_scale(-1)
 	elif MUSIC_KEYS.has(key.keycode):
 		_control_music(MUSIC_KEYS[key.keycode])
@@ -574,7 +584,7 @@ static func _record_text(elapsed_s: float, previous_best_s: float) -> String:
 ## Suggests a lower graphics preset when the ride stays below 60 fps (R43). Simulated rides
 ## are left alone: they are for trying courses out.
 func _watch_frame_time(delta: float) -> void:
-	if _budget_noted or _simulation.visible or _torqa.riding_along_video() or _backdrop.visible:
+	if _budget_noted or _simulating or _torqa.riding_along_video() or _backdrop.visible:
 		return
 	_frame_time = lerpf(_frame_time if _frame_time > 0.0 else delta, delta, 0.05)
 	_slow_for = _slow_for + delta if _frame_time > FRAME_BUDGET_S else 0.0
@@ -585,49 +595,14 @@ func _watch_frame_time(delta: float) -> void:
 		)
 
 
-func _build_simulation_panel() -> void:
-	_simulation.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
-	_simulation.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_simulation.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	_simulation.position.y -= 20.0
-	_simulation.mouse_filter = Control.MOUSE_FILTER_STOP
-	var rows: VBoxContainer = VBoxContainer.new()
-	var speeds: HBoxContainer = HBoxContainer.new()
-	speeds.add_theme_constant_override("separation", 6)
-	speeds.add_child(UiTheme.caption(tr("Simulation")))
-	var group: ButtonGroup = ButtonGroup.new()
-	for scale: float in TIME_SCALES:
-		var button: Button = Button.new()
-		button.text = "%d×" % roundi(scale)
-		button.toggle_mode = true
-		button.button_group = group
-		button.focus_mode = Control.FOCUS_NONE
-		button.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
-		button.pressed.connect(_set_time_scale.bind(scale))
-		speeds.add_child(button)
-		_speed_buttons.append(button)
-	rows.add_child(speeds)
-	var hint: Label = Label.new()
-	hint.text = tr(
-		"Click the map or profile to jump · + / − speed · C: free camera, Shift + arrows or mouse to look"
-	)
-	hint.add_theme_font_size_override("font_size", 11)
-	hint.add_theme_color_override("font_color", UiTheme.MUTED)
-	rows.add_child(hint)
-	_simulation.add_child(rows)
-	_simulation.hide()
-	add_child(_simulation)
-
-
 func _set_time_scale(scale: float) -> void:
 	_time_scale = _torqa.set_time_scale(scale) if _torqa != null else 1.0
-	for i: int in range(_speed_buttons.size()):
-		_speed_buttons[i].set_pressed_no_signal(is_equal_approx(TIME_SCALES[i], _time_scale))
+	_bar.show_speed(_time_scale)
 
 
 func _step_time_scale(step: int) -> void:
-	var index: int = TIME_SCALES.find(_time_scale)
-	_set_time_scale(TIME_SCALES[clampi(index + step, 0, TIME_SCALES.size() - 1)])
+	var index: int = RideBar.TIME_SCALES.find(_time_scale)
+	_set_time_scale(RideBar.TIME_SCALES[clampi(index + step, 0, RideBar.TIME_SCALES.size() - 1)])
 	_show_toast(tr("Simulation: %d×") % roundi(_time_scale))
 
 
@@ -714,12 +689,12 @@ func _finish_ride() -> void:
 	_finished = true
 	_pause_button.hide()
 	_settings_button.hide()
+	_bar.show_settings(false)
 	_torqa.finish_ride()
 	if not _saved:
 		# Nothing to save (e.g. the trainer never connected): offer the way back.
 		_show_toast(tr("Nothing recorded."))
-		_finish_button.text = tr("Back")
-		_finish_button.show()
+		_bar.show_finish("back")
 
 
 func _on_ride_saved(path: String) -> void:
@@ -727,14 +702,13 @@ func _on_ride_saved(path: String) -> void:
 	_pause_button.hide()
 	_saved = true
 	_saved_path = path
-	_settings_button.hide()
+	_bar.show_settings(false)
 	if _summary_when_saved:
 		summary_requested.emit(path)
 		return
 	_show_toast(tr("Saved %s") % path.get_file())
 	_toast_left = TOAST_SECONDS * 2.0
-	_finish_button.text = tr("View summary")
-	_finish_button.show()
+	_bar.show_finish("summary")
 
 
 func _on_failed(message: String) -> void:
