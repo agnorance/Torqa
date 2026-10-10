@@ -1209,42 +1209,6 @@ impl TorqaApp {
     /// locale code, empty for the system language, and `avatar` either `"female"` or `"male"`.
     #[func]
     fn profile(&self) -> VarDictionary {
-        let Some(stored) = self.app.as_ref().map(App::profile) else {
-            return VarDictionary::new();
-        };
-        let p = &stored.profile;
-        vdict! {
-            "id" => stored.id.as_str(),
-            "name" => p.name.as_str(),
-            "rider_mass_kg" => p.rider_mass.0,
-            "bike_mass_kg" => p.bike_mass.0,
-            "ftp_w" => p.ftp.0,
-            "max_heart_rate_bpm" => p.max_heart_rate.0,
-            "units" => match p.units {
-                UnitSystem::Metric => "metric",
-                UnitSystem::Imperial => "imperial",
-            },
-            "language" => p.language.as_str(),
-            "avatar" => match p.avatar {
-                Avatar::Female => "female",
-                Avatar::Male => "male",
-            },
-            "drivetrain" => match p.drivetrain {
-                Drivetrain::Cassette => "cassette",
-                Drivetrain::SingleCog { .. } => "single_cog",
-            },
-            "chainring" => match p.drivetrain {
-                Drivetrain::SingleCog { chainring, .. } => i64::from(chainring),
-                Drivetrain::Cassette => 50,
-            },
-            "cog" => match p.drivetrain {
-                Drivetrain::SingleCog { cog, .. } => i64::from(cog),
-                Drivetrain::Cassette => 14,
-            },
-            "default_difficulty_pct" => p.default_difficulty.0,
-            "power_zones_pct" => &percent(&p.power_zones),
-            "heart_rate_zones_pct" => &percent(&p.heart_rate_zones),
-        }
         self.app
             .as_ref()
             .map(App::profile)
