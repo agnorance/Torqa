@@ -37,3 +37,10 @@ textures/vram_compression/import_etc2_astc=true
 [internationalization]
 
 locale/translations=PackedStringArray("res://translations/de.po")
+
+[shader_globals]
+
+wind_time={
+"type": "float",
+"value": 0.0
+}

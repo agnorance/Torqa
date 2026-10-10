@@ -677,6 +677,18 @@ impl TorqaApp {
         self.command(|app| app.set_overlay_window(window));
     }
 
+    /// Whether the ride view's control bar is folded away to its corner (#189).
+    #[func]
+    fn ride_bar_folded(&self) -> bool {
+        self.app.as_ref().is_some_and(App::ride_bar_folded)
+    }
+
+    /// Remembers whether the ride view's control bar is folded away.
+    #[func]
+    fn set_ride_bar_folded(&mut self, folded: bool) {
+        self.command(|app| app.set_ride_bar_folded(folded));
+    }
+
     /// Whether rides are simulated (fake trainer): they can be sped up and jumped (#53).
     #[func]
     fn simulating(&self) -> bool {
@@ -1108,6 +1120,19 @@ impl TorqaApp {
         }
     }
 
+    /// Pauses or resumes the ride: the clock, the road and the trainer wait. Returns whether
+    /// the ride is paused afterwards.
+    #[func]
+    fn set_paused(&mut self, paused: bool) -> bool {
+        self.app.as_mut().is_some_and(|app| app.set_paused(paused))
+    }
+
+    /// Whether the ride is paused.
+    #[func]
+    fn is_paused(&self) -> bool {
+        self.app.as_ref().is_some_and(App::is_paused)
+    }
+
     /// Changes difficulty and descent mode of the current ride.
     #[func]
     fn adjust_ride(&mut self, difficulty: f64, flat_descents: bool) {
@@ -1337,6 +1362,7 @@ impl TorqaApp {
             |value: Option<u8>| value.map_or_else(Variant::nil, |z| i64::from(z).to_variant());
         let mut dict = vdict! {
             "elapsed_s" => state.elapsed.as_secs_f64(),
+            "paused" => app.is_paused(),
             "distance_m" => state.distance.0,
             "speed_kmh" => state.speed.as_kilometers_per_hour(),
             "power" => &optional(t.power.map(|p| p.0)),

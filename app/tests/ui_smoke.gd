@@ -19,6 +19,7 @@ func _run() -> void:
 	_rider_drivetrain()
 	_shifter_buttons()
 	_course_cards()
+	_ride_bar()
 	await _courses_tab()
 	_video_view()
 	_video_alignment()
@@ -536,6 +537,47 @@ func _check(condition: bool, what: String) -> void:
 	if not condition:
 		push_error("UI SMOKE TEST FAILED: " + what)
 		_failed = true
+
+
+## The ride view's controls (#189): icons with tooltips, the simulation's speeds when
+## simulating, and a chevron that folds the bar away and back.
+func _ride_bar() -> void:
+	var bar: RideBar = RideBar.new()
+	root.add_child(bar)
+	var tools: Control = bar.get("_tools")
+	for button: Button in [bar.get("_settings"), bar.get("_overlay"), bar.get("_fold")]:
+		_check(
+			button.icon != null and not button.tooltip_text.is_empty(),
+			"an icon with a tooltip: %s" % button.tooltip_text
+		)
+	_check(UiIcons.texture("cog").get_width() == RideBar.ICON, "icons drawn at their size")
+	var folds: Array[bool] = []
+	bar.folded_changed.connect(func(folded: bool) -> void: folds.append(folded))
+	var fold: Button = bar.get("_fold")
+	fold.pressed.emit()
+	_check(bar.folded and not tools.visible and folds == [true], "folded away: %s" % [folds])
+	fold.pressed.emit()
+	_check(not bar.folded and tools.visible and folds == [true, false], "unfolded again")
+	var speeds: Control = bar.get("_simulation")
+	_check(not speeds.visible, "no speeds unless simulating")
+	bar.set_simulating(true)
+	var chosen: Array[float] = []
+	bar.speed_chosen.connect(func(scale: float) -> void: chosen.append(scale))
+	var buttons: Array[Button] = bar.get("_speed_buttons")
+	buttons[2].pressed.emit()
+	_check(speeds.visible and chosen == [5.0], "a speed chosen: %s" % [chosen])
+	bar.show_speed(10.0)
+	_check(
+		buttons[3].button_pressed and not buttons[2].button_pressed, "the speed in effect is marked"
+	)
+	bar.show_finish("back")
+	var finish: Button = bar.get("_finish")
+	_check(finish.visible, "the way back shows")
+	var pause: Button = bar.get("_pause")
+	var pausing: Texture2D = pause.icon
+	bar.show_paused(true)
+	_check(pause.icon != pausing and pause.tooltip_text != "", "paused: play to go on")
+	bar.free()
 
 
 ## A click on the Courses tab while a course page covers the gallery brings it back (#188).

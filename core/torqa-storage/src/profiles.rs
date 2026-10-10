@@ -186,6 +186,8 @@ struct Settings {
     graphics_quality: Option<GraphicsQuality>,
     /// Where the overlay was last on screen (R55).
     overlay: Option<OverlayWindow>,
+    /// Whether the ride view's control bar is folded away to its corner (#189).
+    ride_bar_folded: Option<bool>,
 }
 
 /// What the Di2 shifter's buttons do (#139): for each D-Fly channel, the action of each kind
@@ -548,6 +550,23 @@ pub fn set_overlay_window(data_dir: &Path, window: OverlayWindow) -> Result<(), 
     save_settings(data_dir, &settings)
 }
 
+/// Whether the ride view's control bar is folded away to its corner (#189); shown until it
+/// is folded.
+#[must_use]
+pub fn ride_bar_folded(data_dir: &Path) -> bool {
+    settings(data_dir).ride_bar_folded.unwrap_or(false)
+}
+
+/// Remembers whether the ride view's control bar is folded away.
+///
+/// # Errors
+/// On file system errors.
+pub fn set_ride_bar_folded(data_dir: &Path, folded: bool) -> Result<(), ProfileError> {
+    let mut settings = settings(data_dir);
+    settings.ride_bar_folded = Some(folded);
+    save_settings(data_dir, &settings)
+}
+
 fn settings(data_dir: &Path) -> Settings {
     std::fs::read_to_string(data_dir.join(SETTINGS_FILE))
         .ok()
@@ -683,6 +702,20 @@ mod tests {
         assert_eq!(map.action(1, Press::Short), None);
         assert_eq!(map.action(1, Press::Long), Some(ButtonAction::ShiftUp));
         assert_eq!(map.action(2, Press::Short), None, "not shifting any more");
+    }
+
+    #[test]
+    fn the_folded_ride_bar_is_remembered_with_the_other_settings() {
+        let dir = temp_dir("ride-bar");
+        assert!(!ride_bar_folded(&dir));
+        set_graphics_quality(&dir, GraphicsQuality::High).unwrap();
+
+        set_ride_bar_folded(&dir, true).unwrap();
+
+        assert!(ride_bar_folded(&dir));
+        assert_eq!(graphics_quality(&dir), GraphicsQuality::High);
+        set_ride_bar_folded(&dir, false).unwrap();
+        assert!(!ride_bar_folded(&dir));
     }
 
     #[test]
