@@ -58,6 +58,12 @@ pub struct Profile {
     pub avatar: Avatar,
     /// What the rider shifts with.
     pub drivetrain: Drivetrain,
+    /// Upper bounds of power zones 1–6 as a share of FTP (zone 7 is open), each above the one
+    /// before; [`POWER_ZONES`] unless the rider sets their own.
+    pub power_zones: [f64; 6],
+    /// Upper bounds of heart-rate zones 1–4 as a share of the maximum heart rate (zone 5 is
+    /// open), each above the one before; [`HEART_RATE_ZONES`] unless the rider sets their own.
+    pub heart_rate_zones: [f64; 4],
     /// Trainer difficulty a ride starts with: how much of the road gradient the rider feels.
     pub default_difficulty: Percent,
 }
@@ -74,17 +80,21 @@ impl Default for Profile {
             language: String::new(),
             avatar: Avatar::Female,
             drivetrain: Drivetrain::Cassette,
+            power_zones: POWER_ZONES,
+            heart_rate_zones: HEART_RATE_ZONES,
             default_difficulty: Percent(50.0),
         }
     }
 }
 
 /// Upper bounds of power zones 1–6 as a share of FTP (Coggan's seven zones; zone 7 is open).
-const POWER_ZONES: [f64; 6] = [0.55, 0.75, 0.90, 1.05, 1.20, 1.50];
+pub const POWER_ZONES: [f64; 6] = [0.55, 0.75, 0.90, 1.05, 1.20, 1.50];
 /// Upper bounds of heart-rate zones 1–4 as a share of the maximum (five zones; zone 5 is open).
-const HEART_RATE_ZONES: [f64; 4] = [0.60, 0.70, 0.80, 0.90];
+pub const HEART_RATE_ZONES: [f64; 4] = [0.60, 0.70, 0.80, 0.90];
 /// Where zone 1 starts as a share of the maximum: lower heart rates are rest, not training.
 const HEART_RATE_ZONE_1_FLOOR: f64 = 0.50;
+/// No zone bound lies above this share of its base: three times FTP is sprinting.
+const ZONE_CEILING: f64 = 3.0;
 
 impl Profile {
     /// Rider plus bike.
@@ -106,13 +116,28 @@ impl Profile {
     /// Power zone 1–7 relative to FTP.
     #[must_use]
     pub fn power_zone(&self, power: Watts) -> u8 {
-        zone(power.0, self.ftp.0, &POWER_ZONES)
+        zone(power.0, self.ftp.0, &self.power_zones)
     }
 
     /// Heart-rate zone 1–5 relative to the maximum heart rate.
     #[must_use]
     pub fn heart_rate_zone(&self, heart_rate: BeatsPerMinute) -> u8 {
-        zone(heart_rate.0, self.max_heart_rate.0, &HEART_RATE_ZONES)
+        zone(heart_rate.0, self.max_heart_rate.0, &self.heart_rate_zones)
+    }
+
+    /// Power zone bounds a rider may keep: six, each above the one before, none above
+    /// `ZONE_CEILING`; the standard ones otherwise, so a file or a dialog cannot leave zones
+    /// that cannot be told apart.
+    #[must_use]
+    pub fn sane_power_zones(bounds: &[f64]) -> [f64; 6] {
+        sane(bounds, 0.0).unwrap_or(POWER_ZONES)
+    }
+
+    /// Heart-rate zone bounds a rider may keep: four, each above the one before and above the
+    /// floor of zone 1; the standard ones otherwise.
+    #[must_use]
+    pub fn sane_heart_rate_zones(bounds: &[f64]) -> [f64; 4] {
+        sane(bounds, HEART_RATE_ZONE_1_FLOOR).unwrap_or(HEART_RATE_ZONES)
     }
 
     /// The lowest and highest heart rate of zone 1–5 (other zones are clamped to these): zone
@@ -122,11 +147,31 @@ impl Profile {
         let index = usize::from(zone.clamp(1, 5)) - 1;
         let low = index
             .checked_sub(1)
-            .map_or(HEART_RATE_ZONE_1_FLOOR, |below| HEART_RATE_ZONES[below]);
-        let high = HEART_RATE_ZONES.get(index).copied().unwrap_or(1.0);
+            .map_or(HEART_RATE_ZONE_1_FLOOR, |below| {
+                self.heart_rate_zones[below]
+            });
+        let high = self.heart_rate_zones.get(index).copied().unwrap_or(1.0);
         let max = self.max_heart_rate.0;
         (BeatsPerMinute(low * max), BeatsPerMinute(high * max))
     }
+}
+
+/// `bounds` as an array of `N`, if there are `N` of them, each above the one before, the first
+/// above `floor` and none above `ZONE_CEILING`.
+fn sane<const N: usize>(bounds: &[f64], floor: f64) -> Option<[f64; N]> {
+    let mut out = [0.0; N];
+    if bounds.len() != N {
+        return None;
+    }
+    let mut last = floor;
+    for (slot, &bound) in out.iter_mut().zip(bounds) {
+        if !(bound.is_finite() && bound > last && bound <= ZONE_CEILING) {
+            return None;
+        }
+        *slot = bound;
+        last = bound;
+    }
+    Some(out)
 }
 
 /// The 1-based zone of `value`: zone n ends at `bounds[n - 1] × base`, inclusive.
@@ -207,6 +252,46 @@ mod tests {
         assert_eq!(
             rider.heart_rate_zone_range(9),
             rider.heart_rate_zone_range(5)
+        );
+    }
+
+    #[test]
+    fn a_riders_own_zones_move_the_boundaries() {
+        let mut rider = rider();
+        rider.power_zones = [0.50, 0.70, 0.85, 1.00, 1.15, 1.40];
+        rider.heart_rate_zones = [0.55, 0.65, 0.75, 0.85];
+        // 250 W × 1.00 = 250 W ends zone 4 now; 190 bpm × 0.75 = 142.5 ends zone 3.
+        assert_eq!(rider.power_zone(Watts(250.0)), 4);
+        assert_eq!(rider.power_zone(Watts(251.0)), 5);
+        assert_eq!(rider.heart_rate_zone(BeatsPerMinute(142.0)), 3);
+        assert_eq!(rider.heart_rate_zone(BeatsPerMinute(143.0)), 4);
+        let (low, high) = rider.heart_rate_zone_range(4);
+        assert!((low.0 - 142.5).abs() < 1e-9 && (high.0 - 161.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn zones_out_of_order_or_out_of_count_fall_back_to_the_standard_ones() {
+        assert_eq!(
+            Profile::sane_power_zones(&[0.5, 0.7, 0.85, 1.0, 1.15, 1.4]),
+            [0.5, 0.7, 0.85, 1.0, 1.15, 1.4]
+        );
+        assert_eq!(
+            Profile::sane_power_zones(&[0.5, 0.7, 0.7, 1.0, 1.15, 1.4]),
+            POWER_ZONES
+        );
+        assert_eq!(Profile::sane_power_zones(&[0.5, 0.7]), POWER_ZONES);
+        assert_eq!(
+            Profile::sane_power_zones(&[0.5, 0.7, 0.85, 1.0, 1.15, 4.0]),
+            POWER_ZONES
+        );
+        // Below the floor of zone 1 a heart-rate zone would be empty.
+        assert_eq!(
+            Profile::sane_heart_rate_zones(&[0.45, 0.7, 0.8, 0.9]),
+            HEART_RATE_ZONES
+        );
+        assert_eq!(
+            Profile::sane_heart_rate_zones(&[0.55, 0.65, 0.75, 0.85]),
+            [0.55, 0.65, 0.75, 0.85]
         );
     }
 

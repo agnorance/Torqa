@@ -32,6 +32,13 @@ const VIEWS: Dictionary[String, Array] = {
 	"bridge-chase": ["kirchenfeldbruecke", 200.0, 0, "Midday", "Clear"],
 	"roundabout-drone": ["kirchenfeldbruecke", 170.0, 2, "Midday", "Clear"],
 	"bridge-side": ["kirchenfeldbruecke", 380.0, 0, "Midday", "Clear", Vector3(140.0, -22.0, 0.0)],
+	# The reference route (#167): a planner's file over a pass, its hard places.
+	"oberalp-tunnel-chase": ["oberalp", 3700.0, 0, "Midday", "Clear"],
+	"oberalp-railway-chase": ["oberalp", 4500.0, 0, "Midday", "Clear"],
+	"oberalp-hairpins-drone": ["oberalp", 6100.0, 2, "Midday", "Clear"],
+	"oberalp-lake-drone": ["oberalp", 10900.0, 2, "Midday", "Clear"],
+	"oberalp-portal-drone": ["oberalp", 11600.0, 2, "Midday", "Clear"],
+	"oberalp-village-chase": ["oberalp", 24000.0, 0, "Midday", "Clear"],
 }
 ## Frames to let the world stream in around a new place; software rendering is slow.
 const SETTLE_FRAMES: int = 240
