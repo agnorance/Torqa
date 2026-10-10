@@ -76,6 +76,13 @@ func options() -> Dictionary:
 	}
 
 
+## Sets the trainer difficulty alone, without emitting `changed`: the rider's default when a
+## course opens.
+func set_difficulty(value: float) -> void:
+	_difficulty.set_value_no_signal(clampf(value, _difficulty.min_value, _difficulty.max_value))
+	_update_labels()
+
+
 ## Shows `options` (as `options()` returns them) without emitting `changed`.
 func set_options(options: Dictionary) -> void:
 	var camera_mode: int = options.get("camera", 0)

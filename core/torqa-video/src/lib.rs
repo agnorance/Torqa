@@ -80,11 +80,21 @@ pub struct Video {
     /// Seconds per unit of the stream's timestamps.
     time_base: f64,
     info: VideoInfo,
-    /// The frame decoded last; the next one requested is usually just after it.
+    /// The frame handed out last; the next one requested is usually just after it.
     current: Option<Frame>,
-    /// A frame decoded beyond the one requested, kept for the next request.
-    ahead: Option<Frame>,
+    /// A picture decoded beyond the one requested, kept for the next request.
+    ahead: Option<Decoded>,
     ended: bool,
+    /// Pictures converted so far: one per frame handed out, none for those passed over.
+    converted: u64,
+}
+
+/// A decoded picture before conversion, with its moment in the video. Pictures passed over
+/// on the way to the one requested stay like this: converting them would cost more than
+/// decoding them.
+struct Decoded {
+    time: Duration,
+    picture: ffmpeg::frame::Video,
 }
 
 /// What decodes the stream: FFmpeg, or rav1d for AV1 (#39).
@@ -143,7 +153,13 @@ impl Video {
                 ready: std::collections::VecDeque::new(),
             }
         } else {
-            let context = ffmpeg::codec::context::Context::from_parameters(parameters)?;
+            let mut context = ffmpeg::codec::context::Context::from_parameters(parameters)?;
+            // FFmpeg decodes on one thread unless told otherwise; a camera's 4K stream
+            // needs them all to keep up with a ride.
+            context.set_threading(ffmpeg::codec::threading::Config {
+                kind: ffmpeg::codec::threading::Type::Frame,
+                count: 0,
+            });
             Decoder::Ffmpeg(context.decoder().video()?)
         };
         let (width, height) = display_size(coded_width, coded_height);
@@ -152,6 +168,7 @@ impl Video {
             stream: index,
             decoder,
             scaler: None,
+            converted: 0,
             time_base,
             info: VideoInfo {
                 duration,
@@ -185,17 +202,24 @@ impl Video {
         if behind || far_ahead || self.current.is_none() {
             self.seek(time)?;
         }
-        // Decode forward until the next frame would be past `time`.
+        // Decode forward until the next picture would be past `time`; only the last one
+        // reached is converted, the ones passed over are not.
+        let mut reached: Option<Decoded> = None;
         loop {
             if self.ahead.is_none() {
                 self.ahead = self.decode_next()?;
             }
             match &self.ahead {
-                Some(next) if next.time <= time || self.current.is_none() => {
-                    self.current = self.ahead.take();
+                Some(next)
+                    if next.time <= time || (self.current.is_none() && reached.is_none()) =>
+                {
+                    reached = self.ahead.take();
                 }
                 _ => break,
             }
+        }
+        if let Some(decoded) = reached {
+            self.current = Some(self.convert(&decoded)?);
         }
         self.current.as_ref().ok_or(VideoError::Empty)
     }
@@ -225,8 +249,8 @@ impl Video {
         Ok(())
     }
 
-    /// The next frame of the stream, or `None` at its end.
-    fn decode_next(&mut self) -> Result<Option<Frame>, VideoError> {
+    /// The next picture of the stream, or `None` at its end.
+    fn decode_next(&mut self) -> Result<Option<Decoded>, VideoError> {
         if matches!(self.decoder, Decoder::Av1 { .. }) {
             return self.decode_next_av1();
         }
@@ -236,7 +260,7 @@ impl Video {
                 unreachable!("checked above")
             };
             match decoder.receive_frame(&mut picture) {
-                Ok(()) => return Ok(Some(self.convert(&picture)?)),
+                Ok(()) => return Ok(Some(self.decoded(picture))),
                 Err(ffmpeg::Error::Eof) => return Ok(None),
                 Err(ffmpeg::Error::Other {
                     errno: ffmpeg::error::EAGAIN,
@@ -263,7 +287,7 @@ impl Video {
     }
 
     /// [`Video::decode_next`] for AV1: packets go to rav1d, pictures through FFmpeg's scaler.
-    fn decode_next_av1(&mut self) -> Result<Option<Frame>, VideoError> {
+    fn decode_next_av1(&mut self) -> Result<Option<Decoded>, VideoError> {
         loop {
             let Decoder::Av1 {
                 decoder,
@@ -276,7 +300,7 @@ impl Video {
             };
             if let Some(picture) = ready.pop_front() {
                 let frame = picture_frame(&picture)?;
-                return self.convert(&frame).map(Some);
+                return Ok(Some(self.decoded(frame)));
             }
             if self.ended {
                 return Ok(None);
@@ -307,9 +331,20 @@ impl Video {
         }
     }
 
-    fn convert(&mut self, decoded: &ffmpeg::frame::Video) -> Result<Frame, VideoError> {
+    /// A decoded picture with its moment in the video, from its timestamp.
+    fn decoded(&self, picture: ffmpeg::frame::Video) -> Decoded {
+        let timestamp = picture.timestamp().or(picture.pts()).unwrap_or(0).max(0);
+        Decoded {
+            time: Duration::from_secs_f64(f64_from(timestamp) * self.time_base),
+            picture,
+        }
+    }
+
+    /// The picture scaled to the display size, as RGBA rows.
+    fn convert(&mut self, decoded: &Decoded) -> Result<Frame, VideoError> {
         let (width, height) = (self.info.width, self.info.height);
-        let from = (decoded.format(), decoded.width(), decoded.height());
+        let picture = &decoded.picture;
+        let from = (picture.format(), picture.width(), picture.height());
         if self.scaler.as_ref().is_none_or(|s| s.from != from) {
             self.scaler = Some(Scaler {
                 from,
@@ -326,8 +361,9 @@ impl Video {
         }
         let mut rgba = ffmpeg::frame::Video::empty();
         if let Some(scaler) = &mut self.scaler {
-            scaler.context.run(decoded, &mut rgba)?;
+            scaler.context.run(picture, &mut rgba)?;
         }
+        self.converted += 1;
         let row = width as usize * 4;
         let stride = rgba.stride(0);
         let data = rgba.data(0);
@@ -336,9 +372,8 @@ impl Video {
         for y in 0..height as usize {
             pixels.extend_from_slice(&data[y * stride..y * stride + row]);
         }
-        let timestamp = decoded.timestamp().or(decoded.pts()).unwrap_or(0).max(0);
         Ok(Frame {
-            time: Duration::from_secs_f64(f64_from(timestamp) * self.time_base),
+            time: decoded.time,
             width,
             height,
             rgba: pixels,
@@ -553,6 +588,82 @@ fn display_size(width: u32, height: u32) -> (u32, u32) {
 #[allow(clippy::cast_precision_loss)] // timestamps far below 2^52
 pub(crate) fn f64_from(value: i64) -> f64 {
     value as f64
+}
+
+/// How a video keeps up on this machine, played against the wall clock as a ride at 1×
+/// does; from [`benchmark`], for `torqa-cli video`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Benchmark {
+    /// The video.
+    pub info: VideoInfo,
+    /// How long the clock ran.
+    pub played: Duration,
+    /// Frames handed out meanwhile.
+    pub delivered: u32,
+    /// The longest wait between two frames.
+    pub longest_wait: Duration,
+    /// The median wait between two frames.
+    pub median_wait: Duration,
+    /// Frames decoded per second with no clock to wait for.
+    pub straight_per_second: f64,
+}
+
+impl Benchmark {
+    /// Frames handed out per second of the clock.
+    #[must_use]
+    pub fn delivered_per_second(&self) -> f64 {
+        f64::from(self.delivered) / self.played.as_secs_f64().max(1e-9)
+    }
+
+    /// Whether a ride along this video would run smoothly here: frames at the video's own
+    /// rate, or 24 a second at least, and never a wait of half a second.
+    #[must_use]
+    pub fn keeps_up(&self) -> bool {
+        let wanted = self.info.frame_rate.min(24.0) * 0.9;
+        self.delivered_per_second() >= wanted && self.longest_wait < Duration::from_millis(500)
+    }
+}
+
+/// Plays the video at `path` against the wall clock for `seconds`, asking for the frame at
+/// the clock's time as a ride at 1× does, then decodes straight for up to five seconds.
+///
+/// # Errors
+/// [`VideoError`] if the file cannot be opened or decoded.
+pub fn benchmark(path: &Path, seconds: u64) -> Result<Benchmark, VideoError> {
+    let mut video = Video::open(path)?;
+    let info = video.info();
+    let played = Duration::from_secs(seconds).min(info.duration);
+    let start = std::time::Instant::now();
+    let (mut delivered, mut last) = (0, None);
+    let mut waits: Vec<Duration> = Vec::new();
+    let mut previous = start;
+    while start.elapsed() < played {
+        let time = video.frame_at(start.elapsed())?.time;
+        if last != Some(time) {
+            last = Some(time);
+            delivered += 1;
+            waits.push(previous.elapsed());
+            previous = std::time::Instant::now();
+        }
+    }
+    waits.sort();
+    video.seek(Duration::ZERO)?;
+    let start = std::time::Instant::now();
+    let mut frames = 0;
+    while video.decode_next()?.is_some() {
+        frames += 1;
+        if start.elapsed() > Duration::from_secs(5) {
+            break;
+        }
+    }
+    Ok(Benchmark {
+        info,
+        played,
+        delivered,
+        longest_wait: waits.last().copied().unwrap_or_default(),
+        median_wait: waits.get(waits.len() / 2).copied().unwrap_or_default(),
+        straight_per_second: f64::from(frames) / start.elapsed().as_secs_f64().max(1e-9),
+    })
 }
 
 #[cfg(test)]
