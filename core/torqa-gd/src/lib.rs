@@ -1248,6 +1248,9 @@ impl TorqaApp {
             "default_difficulty_pct" => p.default_difficulty.0,
             "power_zones_pct" => &percent(&p.power_zones),
             "heart_rate_zones_pct" => &percent(&p.heart_rate_zones),
+            "power_zones_pct" => &percent(&p.power_zones),
+            "heart_rate_zones_pct" => &percent(&p.heart_rate_zones),
+            "default_difficulty_pct" => p.default_difficulty.0,
         }
     }
 
@@ -1300,6 +1303,9 @@ impl TorqaApp {
                 &data,
                 "heart_rate_zones_pct",
             )),
+            default_difficulty: Percent(
+                number("default_difficulty_pct", defaults.default_difficulty.0).clamp(0.0, 100.0),
+            ),
             language: data
                 .get("language")
                 .and_then(|v| v.try_to::<GString>().ok())

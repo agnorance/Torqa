@@ -1181,3 +1181,26 @@ msgstr "Alle Einstellungen"
 
 msgid "Fewer"
 msgstr "Weniger"
+msgid "Zones"
+msgstr "Zonen"
+
+msgid "Power zones, the top of each as a share of FTP"
+msgstr "Leistungszonen, die Obergrenze jeder als Anteil der FTP"
+
+msgid "Heart-rate zones, the top of each as a share of the maximum heart rate"
+msgstr "Pulszonen, die Obergrenze jeder als Anteil des Maximalpulses"
+
+msgid "Standard zones"
+msgstr "Standardzonen"
+
+msgid "Coggan's power zones and the usual heart-rate zones"
+msgstr "Coggans Leistungszonen und die üblichen Pulszonen"
+
+msgid "and above"
+msgstr "und darüber"
+
+msgid "Power zones"
+msgstr "Leistungszonen"
+
+msgid "Heart-rate zones"
+msgstr "Herzfrequenzzonen"

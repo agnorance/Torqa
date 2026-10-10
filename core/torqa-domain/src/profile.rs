@@ -66,6 +66,8 @@ pub struct Profile {
     /// Upper bounds of heart-rate zones 1–4 as a share of the maximum heart rate (zone 5 is
     /// open), each above the one before; [`HEART_RATE_ZONES`] unless the rider sets their own.
     pub heart_rate_zones: [f64; 4],
+    /// Trainer difficulty a ride starts with: how much of the road gradient the rider feels.
+    pub default_difficulty: Percent,
 }
 
 impl Default for Profile {
@@ -83,6 +85,9 @@ impl Default for Profile {
             default_difficulty: Percent(50.0),
             power_zones: POWER_ZONES,
             heart_rate_zones: HEART_RATE_ZONES,
+            power_zones: POWER_ZONES,
+            heart_rate_zones: HEART_RATE_ZONES,
+            default_difficulty: Percent(50.0),
         }
     }
 }

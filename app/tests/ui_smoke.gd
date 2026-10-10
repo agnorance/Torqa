@@ -658,9 +658,18 @@ func _profile_icons() -> void:
 	for child: Node in grid.get_children():
 		texts.append((child as Label).text)
 	_check(
-		grid.get_child_count() == brief + 12 and "Deutsch" in texts and "46 T" in texts,
+		grid.get_child_count() == brief + 14 and "Deutsch" in texts and "46 T" in texts,
 		"all settings unfold: %s" % [texts]
 	)
+	# The zones beside the figures: seven power and five heart-rate zones with their ranges.
+	var zones: VBoxContainer = tab.get("_zones")
+	var zone_rows: int = 0
+	var ranges: Array[String] = []
+	for child: Node in zones.get_children():
+		if child is HBoxContainer:
+			zone_rows += 1
+			ranges.append((child.get_child(2) as Label).text)
+	_check(zone_rows == 12 and ranges[0].begins_with("0–110 W"), "zones shown: %s" % [ranges])
 	tab.free()
 	badge.free()
 ## A course's card shows its map under the route once it has one (#192).

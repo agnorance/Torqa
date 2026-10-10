@@ -28,8 +28,8 @@ var _chainring: SpinBox = _spin(20.0, 60.0, 1.0, " T")
 var _cog: SpinBox = _spin(9.0, 36.0, 1.0, " T")
 var _teeth_rows: Array[Control] = []
 var _hud: HudEditor = HudEditor.new()
-var _zones: ZonesEditor = ZonesEditor.new()
 var _badge_slot: HBoxContainer = HBoxContainer.new()
+var _zones: ZonesEditor = ZonesEditor.new()
 
 
 func _ready() -> void:
@@ -114,12 +114,11 @@ func _ready() -> void:
 		grid.add_child(field)
 		if field in [_chainring, _cog]:
 			_teeth_rows.append_array([caption, field])
-	tabs.add_child(grid)
-	_zones.name = tr("Zones")
-	tabs.add_child(_zones)
 	card.add_child(grid)
 	page.add_child(card)
 	tabs.add_child(page)
+	_zones.name = tr("Zones")
+	tabs.add_child(_zones)
 	_hud.name = tr("HUD")
 	tabs.add_child(_hud)
 	add_child(tabs)
