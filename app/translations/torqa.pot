@@ -187,6 +187,10 @@ msgstr ""
 msgid "Apr"
 msgstr ""
 
+#: core/torqa-app/src/hud.rs:120
+msgid "Ascent to go"
+msgstr ""
+
 #: app/scenes/devices_tab.gd:130
 msgid "Assign buttons to D-Fly channels in E-TUBE, then choose here what each press does"
 msgstr ""
@@ -579,7 +583,7 @@ msgstr ""
 msgid "Gear %d of %d"
 msgstr ""
 
-#: core/torqa-app/src/hud.rs:118
+#: core/torqa-app/src/hud.rs:126
 msgid "Grade"
 msgstr ""
 
@@ -667,7 +671,7 @@ msgstr ""
 msgid "In between, the video follows your distance evenly."
 msgstr ""
 
-#: app/scenes/history_screen.gd:288 core/torqa-app/src/hud.rs:127
+#: app/scenes/history_screen.gd:288 core/torqa-app/src/hud.rs:135
 msgid "Intensity"
 msgstr ""
 
@@ -831,7 +835,7 @@ msgstr ""
 msgid "New workout…"
 msgstr ""
 
-#: core/torqa-app/src/hud.rs:121
+#: core/torqa-app/src/hud.rs:129
 msgid "Next 500 m"
 msgstr ""
 
@@ -1235,7 +1239,7 @@ msgstr ""
 msgid "System language"
 msgstr ""
 
-#: app/scenes/history_screen.gd:289 core/torqa-app/src/hud.rs:128
+#: app/scenes/history_screen.gd:289 core/torqa-app/src/hud.rs:136
 msgid "TSS"
 msgstr ""
 
@@ -1415,7 +1419,7 @@ msgstr ""
 msgid "Whole route"
 msgstr ""
 
-#: app/scenes/history_screen.gd:290 core/torqa-app/src/hud.rs:129
+#: app/scenes/history_screen.gd:290 core/torqa-app/src/hud.rs:137
 msgid "Work"
 msgstr ""
 
@@ -1475,7 +1479,7 @@ msgstr ""
 msgid "for %d bpm  ·  now %s"
 msgstr ""
 
-#: app/scenes/history_screen.gd:290 core/torqa-app/src/hud.rs:129
+#: app/scenes/history_screen.gd:290 core/torqa-app/src/hud.rs:137
 msgid "kJ"
 msgstr ""
 
