@@ -5,7 +5,7 @@ mod free_ride;
 mod gear_check;
 mod recorded_ride;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -48,6 +48,14 @@ enum Command {
     GearCheck(Box<gear_check::GearCheckArgs>),
     /// Show length, climbing and elevation source of a GPX route.
     Route(RouteArgs),
+    /// Check how a video keeps up on this machine, played against the clock as a ride is.
+    Video {
+        /// The video file.
+        file: PathBuf,
+        /// How long to play it, in seconds.
+        #[arg(long, default_value_t = 8)]
+        seconds: u64,
+    },
     /// Show the steps of a workout file (ZWO, ERG, MRC, FIT) or built-in workout.
     Workout {
         /// Workout file, or `builtin:<name>`; `builtins` lists the built-in workouts.
@@ -199,6 +207,7 @@ async fn main() -> Result<()> {
         Command::Ride(args) => ride(*args).await,
         Command::GearCheck(args) => gear_check(&args).await,
         Command::Route(args) => route_info(&args).await,
+        Command::Video { file, seconds } => video_check(&file, seconds),
         Command::Workout { workout, ftp } => workout_info(&workout, Watts(ftp)),
     }
 }
@@ -324,6 +333,41 @@ fn workout_info(id: &str, ftp: Watts) -> Result<()> {
     for cue in &plan.cues {
         println!("{:>6}  “{}”", recorded_ride::clock(cue.at), cue.text);
     }
+    Ok(())
+}
+
+fn video_check(file: &Path, seconds: u64) -> Result<()> {
+    let report = torqa_video::benchmark(file, seconds)?;
+    let info = report.info;
+    let length = info.duration.as_secs();
+    println!(
+        "{}×{}, {:.1} frames/s, {}:{:02}",
+        info.width,
+        info.height,
+        info.frame_rate,
+        length / 60,
+        length % 60
+    );
+    println!(
+        "played {:.0} s against the clock: {} frames ({:.1}/s), longest wait {:.2} s, median {:.3} s",
+        report.played.as_secs_f64(),
+        report.delivered,
+        report.delivered_per_second(),
+        report.longest_wait.as_secs_f64(),
+        report.median_wait.as_secs_f64()
+    );
+    println!(
+        "straight decoding: {:.1} frames/s",
+        report.straight_per_second
+    );
+    println!(
+        "{}",
+        if report.keeps_up() {
+            "keeps up: a ride along this video runs smoothly here"
+        } else {
+            "cannot keep up: a ride along this video stutters here (see docs/video.md)"
+        }
+    );
     Ok(())
 }
 

@@ -84,6 +84,14 @@ func _ready() -> void:
 	_workouts.ready_to_start.connect(_start_workout)
 	_profile.profile_changed.connect(_courses.refresh)
 	_tabs.tab_changed.connect(_on_tab_changed)
+	# The course page sits over the gallery in its tab: a click on the Courses tab, already
+	# the current one, brings the gallery back like the page's own button does (#188).
+	_tabs.get_tab_bar().tab_clicked.connect(_on_tab_clicked)
+
+
+func _on_tab_clicked(tab: int) -> void:
+	if tab == Tab.COURSES and _detail.visible:
+		_show_gallery()
 
 
 func _open_course(course: Dictionary) -> void:
