@@ -1173,3 +1173,27 @@ msgstr "Steuerung ausblenden"
 
 msgid "Simulation speed"
 msgstr "Simulationsgeschwindigkeit"
+
+msgid "All settings"
+msgstr "Alle Einstellungen"
+
+msgid "Fewer"
+msgstr "Weniger"
+
+msgid "Power zones"
+msgstr "Leistungszonen"
+
+msgid "Heart-rate zones"
+msgstr "Herzfrequenzzonen"
+
+msgid "Riders"
+msgstr "Fahrer"
+
+msgid "Use"
+msgstr "Verwenden"
+
+msgid "Ride as this rider"
+msgstr "Als dieser Fahrer fahren"
+
+msgid "Active"
+msgstr "Aktiv"
