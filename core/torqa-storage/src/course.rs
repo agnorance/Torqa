@@ -143,6 +143,46 @@ impl VideoReference {
     }
 }
 
+/// Keeps `video` beside the course file `course` as the course's own copy (#165), so the course
+/// outlives its import source: a hard link where both lie on one file system, which takes no
+/// space, else a copy written aside and renamed into place. A file of the same name and `size`
+/// there already (the video itself, or an earlier copy) is used as it is; a different file of
+/// that name is left alone and the copy numbered. Returns the path beside the course.
+///
+/// # Errors
+/// An I/O error linking or copying.
+pub fn keep_video(video: &Path, course: &Path, size: u64) -> io::Result<PathBuf> {
+    let (Some(stem), Some(extension)) = (
+        video.file_stem().map(|s| s.to_string_lossy()),
+        video.extension().map(|e| e.to_string_lossy()),
+    ) else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "a video without a file name",
+        ));
+    };
+    let dir = course.parent().unwrap_or_else(|| Path::new("."));
+    let same_size = |p: &Path| std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.len() == size);
+    let mut beside = dir.join(format!("{stem}.{extension}"));
+    let mut n = 1;
+    while beside.exists() && !same_size(&beside) {
+        n += 1;
+        beside = dir.join(format!("{stem}-{n}.{extension}"));
+    }
+    if same_size(&beside) {
+        return Ok(beside);
+    }
+    if std::fs::hard_link(video, &beside).is_ok() {
+        return Ok(beside);
+    }
+    let partial = beside.with_extension("part");
+    let copied = std::fs::copy(video, &partial).and_then(|_| std::fs::rename(&partial, &beside));
+    if copied.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    copied.map(|()| beside)
+}
+
 /// A course read back from its file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Unpacked {
@@ -485,5 +525,31 @@ mod tests {
         assert!(matches!(error, CourseError::OutsideRoot(..)));
         assert!(!dir.join("c.tqc").exists());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_course_keeps_its_video_beside_it() {
+        let dir = temp_dir("keep-video");
+        let video = dir.join("Ride.MOV");
+        std::fs::write(&video, b"frames").unwrap();
+        let library = dir.join("courses");
+        std::fs::create_dir_all(&library).unwrap();
+        let course = library.join("ride.tqc");
+
+        let kept = keep_video(&video, &course, 6).unwrap();
+
+        assert_eq!(kept, library.join("Ride.MOV"));
+        assert_eq!(std::fs::read(&kept).unwrap(), b"frames");
+        // The copy outlives the original.
+        std::fs::remove_file(&video).unwrap();
+        assert_eq!(std::fs::read(&kept).unwrap(), b"frames");
+        // Kept again: the copy is the file, and the file is its own copy.
+        assert_eq!(keep_video(&kept, &course, 6).unwrap(), kept);
+        // Another video of the same name is not written over.
+        std::fs::write(&video, b"other frames").unwrap();
+        assert_eq!(
+            keep_video(&video, &course, 12).unwrap(),
+            library.join("Ride-2.MOV")
+        );
     }
 }

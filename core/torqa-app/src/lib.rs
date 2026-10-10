@@ -286,6 +286,8 @@ enum JobResult {
     CourseAdded(Result<PathBuf, String>),
     /// The loaded route was saved as this course.
     CourseSaved(Result<PathBuf, String>),
+    /// The course at the first path has its own copy of its video at the second (#165).
+    VideoKept(PathBuf, PathBuf),
     Failed(String),
 }
 
@@ -742,9 +744,21 @@ impl App {
         };
         let added = video::VideoCourse::new(route, &source).map_err(AppError::Video)?;
         let reference = video_reference(&added, route);
-        update_manifest(path, |manifest| manifest.video = Some(reference))?;
+        let (size, course) = (reference.size, path.clone());
+        update_manifest(&course, |manifest| manifest.video = Some(reference))?;
         self.video = Some(added);
         self.view = View::Video;
+        // The course's own copy of the video, beside it, follows in the background: a copy
+        // across disks takes a while (#165). The course refers to the original until then;
+        // the course file is changed from the frame loop only, like every other change to it.
+        let video = video.to_owned();
+        let tx = self.jobs_tx.clone();
+        self.runtime.spawn_blocking(move || {
+            let _ = tx.send(match course::keep_video(&video, &course, size) {
+                Ok(kept) => JobResult::VideoKept(course, kept),
+                Err(e) => JobResult::Failed(format!("cannot keep the video with the course: {e}")),
+            });
+        });
         Ok(())
     }
 
@@ -972,6 +986,17 @@ impl App {
                 .and_then(|()| {
                     let path =
                         replacing.unwrap_or_else(|| unique_course_path(&library, &manifest.name));
+                    // The course's own copy of its video, beside it: the course is ridden long
+                    // after the file it was imported from is moved or gone (#165).
+                    let mut manifest = manifest;
+                    if let Some(video) = &mut manifest.video {
+                        let kept = course::keep_video(Path::new(&video.path), &path, video.size)?;
+                        video.file_name = kept
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        video.path = kept.display().to_string();
+                    }
                     // Written aside first: a replaced course stays whole if writing fails.
                     let partial = path.with_extension("part");
                     course::write(&partial, &manifest, &gpx, &cache, &data)?;
@@ -1033,9 +1058,28 @@ impl App {
     /// # Errors
     /// [`AppError::Storage`] if the file cannot be deleted.
     pub fn delete_course(&mut self, path: &Path) -> Result<(), AppError> {
+        // The course's own copy of its video, beside it, goes with it unless another course
+        // rides along the same file (#165); a video elsewhere is the rider's and stays.
+        let video = course::read_manifest(path)
+            .ok()
+            .and_then(|manifest| manifest.video)
+            .and_then(|reference| reference.locate(path))
+            .filter(|video| video.parent() == path.parent());
         std::fs::remove_file(path).map_err(|e| AppError::Storage(e.to_string()))?;
         if self.course.as_deref() == Some(path) {
             self.course = None;
+        }
+        if let Some(video) = video {
+            let shared = self.courses().into_iter().any(|c| {
+                c.manifest
+                    .video
+                    .as_ref()
+                    .and_then(|reference| reference.locate(&c.path))
+                    .is_some_and(|other| other == video)
+            });
+            if !shared && let Err(e) = std::fs::remove_file(&video) {
+                warn!(%e, video = %video.display(), "cannot remove the course's video");
+            }
         }
         Ok(())
     }
@@ -2289,6 +2333,11 @@ impl App {
                     // No Bluetooth (or no permission): the rider sees it when scanning.
                     warn!(%message, "cannot reconnect the devices used last");
                 }
+                JobResult::VideoKept(course, kept) => {
+                    if let Err(e) = refer_to_kept_video(&course, &kept) {
+                        events.push(AppEvent::Error(e.to_string()));
+                    }
+                }
                 JobResult::Scan(Err(message))
                 | JobResult::Route(_, Err(message))
                 | JobResult::Video(_, Err(message))
@@ -2494,6 +2543,20 @@ fn video_marks(reference: &course::VideoReference) -> Vec<SyncMark> {
 }
 
 /// Changes the manifest of the course file at `path`.
+/// Points the course at `path` to its own copy of its video at `kept` (#165); a course whose
+/// video was taken off in the meantime stays as it is.
+fn refer_to_kept_video(path: &Path, kept: &Path) -> Result<(), AppError> {
+    update_manifest(path, |manifest| {
+        if let Some(video) = &mut manifest.video {
+            video.file_name = kept
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            video.path = kept.display().to_string();
+        }
+    })
+}
+
 fn update_manifest(path: &Path, change: impl FnOnce(&mut Manifest)) -> Result<(), AppError> {
     let storage = |e: course::CourseError| AppError::Storage(e.to_string());
     let mut manifest = course::read_manifest(path).map_err(storage)?;
@@ -3325,13 +3388,15 @@ mod tests {
             panic!("{events:?}")
         };
 
-        // Another machine: the course elsewhere, the video not where it was recorded.
+        // Another machine: the course elsewhere, the video neither where it was recorded nor
+        // in the first machine's library.
         let shared = dir.join("shared");
         let aside = dir.join("aside");
         std::fs::create_dir_all(&shared).unwrap();
         std::fs::create_dir_all(&aside).unwrap();
         std::fs::copy(file, shared.join("gurten.tqc")).unwrap();
         std::fs::rename(&video, aside.join("Gurten.mov")).unwrap();
+        std::fs::remove_file(file.parent().unwrap().join("Gurten.mov")).unwrap();
         let mut other = App::new(dir.join("b/data"), dir.join("b/cache")).unwrap();
         other.open_course(shared.join("gurten.tqc"));
         let events = run_until(&mut other, |e| matches!(e, AppEvent::Error(_)));
@@ -3346,6 +3411,37 @@ mod tests {
         assert_eq!(other.video().unwrap().video, shared.join("Gurten.mov"));
         // Opened, not prepared: nothing is added to that machine's library.
         assert_eq!(other.courses().len(), 0);
+    }
+
+    #[test]
+    fn a_video_course_outlives_the_file_it_was_imported_from() {
+        // #165: the video moved or deleted after the import, the course still rides along it.
+        let dir = temp_dir("video-kept");
+        let video = video_in(&dir, &torqa_video::testing::gopro_video("kept"), "Ride.MOV");
+        let mut app = App::new(dir.join("data"), dir.join("cache")).unwrap();
+        let events = loaded_video(&mut app, video.clone());
+        let Some(AppEvent::CourseAdded(file)) = events.last() else {
+            panic!("{events:?}")
+        };
+        let kept = file.parent().unwrap().join("Ride.MOV");
+        assert!(kept.is_file(), "no copy beside {}", file.display());
+        std::fs::remove_file(&video).unwrap();
+
+        let mut later = App::new(dir.join("data"), dir.join("cache")).unwrap();
+        later.open_course(file.clone());
+        run_until(&mut later, |e| {
+            matches!(e, AppEvent::RouteLoaded(_) | AppEvent::Error(_))
+        });
+
+        assert_eq!(later.video().map(|v| v.video.clone()), Some(kept.clone()));
+
+        // The copy goes with the course, once no course rides along it any more.
+        let twin = file.with_file_name("twin.tqc");
+        std::fs::copy(file, &twin).unwrap();
+        later.delete_course(file).unwrap();
+        assert!(kept.is_file(), "deleted under another course");
+        later.delete_course(&twin).unwrap();
+        assert!(!kept.exists(), "left behind");
     }
 
     #[test]

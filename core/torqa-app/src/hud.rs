@@ -115,6 +115,14 @@ pub const METRICS: &[Metric] = &[
         MetricKind::Elevation,
         284.0,
     ),
+    metric(
+        "ascent_remaining",
+        "Ascent to go",
+        "",
+        0,
+        MetricKind::Elevation,
+        356.0,
+    ),
     metric("grade", "Grade", "", 1, MetricKind::Grade, 4.2),
     metric(
         "upcoming_grade",
@@ -213,6 +221,7 @@ pub fn values(
                 "elapsed" => Some(state.elapsed.as_secs_f64()),
                 "elevation" => state.position.map(|p| p.elevation.0),
                 "elevation_gain" => route.map(|_| summary.elevation_gain.0),
+                "ascent_remaining" => route.map(|r| r.ascent_ahead(state.distance).0),
                 "grade" => state.position.map(|p| p.grade.0),
                 "upcoming_grade" => upcoming,
                 "intensity" => summary.intensity_factor,

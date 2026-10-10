@@ -8,6 +8,8 @@ signal pressed
 
 const WIDTH: float = 300.0
 
+var _title: Label = Label.new()
+
 
 func _init(course: Dictionary, imperial: bool) -> void:
 	custom_minimum_size = Vector2(WIDTH, 0)
@@ -21,20 +23,36 @@ func _init(course: Dictionary, imperial: bool) -> void:
 	var track: PackedVector2Array = course.get("track", PackedVector2Array())
 	path.set_track(track)
 	rows.add_child(path)
-	var title: Label = Label.new()
-	title.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
-	title.text = course["name"]
-	title.add_theme_font_size_override("font_size", 18)
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_title.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+	_title.text = course["name"]
+	_title.add_theme_font_size_override("font_size", 18)
+	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	# Sees the mouse for its tooltip; the click still reaches the card.
+	_title.mouse_filter = Control.MOUSE_FILTER_PASS
+	_title.resized.connect(_fit_title)
 	var heading: HBoxContainer = HBoxContainer.new()
 	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	heading.add_child(title)
+	heading.add_child(_title)
 	if not str(course.get("video", "")).is_empty():
 		heading.add_child(video_badge())
 	rows.add_child(heading)
 	rows.add_child(figure_rows(course, imperial))
 	add_child(rows)
+
+
+## A name the card's width cuts off shows in full on hover, as file managers do; one that fits
+## needs no tooltip.
+func _fit_title() -> void:
+	var font: Font = _title.get_theme_font("font")
+	var size: int = _title.get_theme_font_size("font_size")
+	var width: float = font.get_string_size(_title.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	_title.tooltip_text = _title.text if width > _title.size.x else ""
+
+
+## The name shown on hover; empty while the whole name fits on the card.
+func name_tooltip() -> String:
+	return _title.tooltip_text
 
 
 ## The mark of a video course.
