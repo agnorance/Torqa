@@ -6,7 +6,7 @@
 // `#[gdextension]` macro drops item-level attributes, so the allow must be crate-wide.
 #![allow(unsafe_code)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use godot::classes::image::Format as ImageFormat;
@@ -675,6 +675,25 @@ impl TorqaApp {
             scale: (scale > 0.0).then_some(scale),
         };
         self.command(|app| app.set_overlay_window(window));
+    }
+
+    /// The map picture of the course at `path` (#192): a PNG, empty without one.
+    #[func]
+    #[allow(clippy::needless_pass_by_value)] // #[func] parameters are passed by value from Godot
+    #[allow(clippy::unused_self)] // a #[func] is called on the node
+    fn course_preview(&self, path: GString) -> PackedByteArray {
+        App::course_preview(Path::new(&path.to_string()))
+            .map(|png| PackedByteArray::from(png.as_slice()))
+            .unwrap_or_default()
+    }
+
+    /// Keeps `png`, the map picture the app drew, with the course at `path` (#192).
+    #[func]
+    #[allow(clippy::needless_pass_by_value)] // #[func] parameters are passed by value from Godot
+    fn set_course_preview(&mut self, path: GString, png: PackedByteArray) {
+        let bytes = png.to_vec();
+        let path = PathBuf::from(path.to_string());
+        self.command(|app| app.set_course_preview(&path, &bytes));
     }
 
     /// Whether rides are simulated (fake trainer): they can be sped up and jumped (#53).

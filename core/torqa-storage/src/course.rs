@@ -29,6 +29,8 @@ pub const FORMAT_VERSION: u32 = 1;
 const MANIFEST: &str = "manifest.json";
 const ROUTE: &str = "route.gpx";
 const DATA: &str = "data/";
+/// The course's map picture, drawn by the app when the course was prepared (#192).
+const PREVIEW: &str = "preview.png";
 
 /// Reading or writing a course file failed.
 #[derive(Debug, thiserror::Error)]
@@ -268,19 +270,58 @@ pub fn unpack(path: &Path, data_root: &Path) -> Result<Unpacked, CourseError> {
 /// # Errors
 /// [`CourseError::NewerFormat`] for files from a newer Torqa, or an I/O, zip or manifest error.
 pub fn rewrite_manifest(path: &Path, manifest: &Manifest) -> Result<(), CourseError> {
+    rewrite(path, MANIFEST, |out| {
+        out.start_file(
+            MANIFEST,
+            SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+        )?;
+        serde_json::to_writer_pretty(out, manifest)?;
+        Ok(())
+    })
+}
+
+/// The course's map picture, if it has one: the PNG the app drew when it was prepared (#192).
+#[must_use]
+pub fn preview(path: &Path) -> Option<Vec<u8>> {
+    let mut zip = ZipArchive::new(BufReader::new(File::open(path).ok()?)).ok()?;
+    let mut entry = zip.by_name(PREVIEW).ok()?;
+    let mut png = Vec::new();
+    entry.read_to_end(&mut png).ok()?;
+    Some(png)
+}
+
+/// Puts the course's map picture `png` into its file, in place of an earlier one (#192).
+///
+/// # Errors
+/// If the course cannot be read or written.
+pub fn set_preview(path: &Path, png: &[u8]) -> Result<(), CourseError> {
+    rewrite(path, PREVIEW, |out| {
+        // A PNG is compressed already.
+        out.start_file(
+            PREVIEW,
+            SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+        )?;
+        out.write_all(png)?;
+        Ok(())
+    })
+}
+
+/// Writes the course again with the entry `replaced` written by `write` and everything else
+/// copied as it is; the file appears whole or not at all.
+fn rewrite(
+    path: &Path,
+    replaced: &str,
+    write: impl FnOnce(&mut ZipWriter<BufWriter<File>>) -> Result<(), CourseError>,
+) -> Result<(), CourseError> {
     let mut zip = ZipArchive::new(BufReader::new(File::open(path)?))?;
     manifest_of(&mut zip)?;
     let partial = path.with_extension("part");
     let mut out = ZipWriter::new(BufWriter::new(File::create(&partial)?));
     let written = (|| {
-        out.start_file(
-            MANIFEST,
-            SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
-        )?;
-        serde_json::to_writer_pretty(&mut out, manifest)?;
+        write(&mut out)?;
         for index in 0..zip.len() {
             let entry = zip.by_index_raw(index)?;
-            if entry.name() != MANIFEST {
+            if entry.name() != replaced {
                 out.raw_copy_file(entry)?;
             }
         }
@@ -336,6 +377,24 @@ mod tests {
             profile: vec![[0.0, 500.0], [12_345.0, 620.0]],
             video: None,
         }
+    }
+
+    #[test]
+    fn a_course_keeps_its_map_picture() {
+        let dir = temp_dir("preview");
+        let path = dir.join("lake.tqc");
+        write(&path, &manifest(), "<gpx/>", &dir, &[]).unwrap();
+        assert_eq!(preview(&path), None);
+
+        set_preview(&path, b"PNG one").unwrap();
+        assert_eq!(preview(&path).as_deref(), Some(&b"PNG one"[..]));
+        // Drawn again (a newer map): replaced, the rest of the course as it was.
+        set_preview(&path, b"PNG two").unwrap();
+
+        assert_eq!(preview(&path).as_deref(), Some(&b"PNG two"[..]));
+        let read = read_manifest(&path).unwrap();
+        assert_eq!(read.name, manifest().name);
+        assert_eq!(unpack(&path, &dir.join("out")).unwrap().gpx, "<gpx/>");
     }
 
     #[test]

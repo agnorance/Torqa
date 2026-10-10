@@ -52,6 +52,8 @@ func refresh() -> void:
 	var courses: Array = _torqa.courses()
 	for course: Dictionary in courses:
 		var card: CourseCard = CourseCard.new(course, imperial)
+		var course_path: String = course["path"]
+		card.set_map(_torqa.course_preview(course_path))
 		card.pressed.connect(func() -> void: course_opened.emit(course))
 		_gallery.add_child(card)
 	_empty.visible = courses.is_empty()
@@ -232,6 +234,13 @@ func _on_course_added(path: String) -> void:
 	_importing = ""
 	_loading.hide()
 	_import_button.disabled = false
+	# The course's map picture for its card, from the world just built (#192).
+	if _torqa.course_preview(path).is_empty():
+		var png: PackedByteArray = await MapPreview.capture(
+			get_tree(), _torqa.minimap_mesh(), _torqa.track(2000)
+		)
+		if not png.is_empty():
+			_torqa.set_course_preview(path, png)
 	refresh()
 	if importing.is_empty():
 		return
