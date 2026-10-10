@@ -21,8 +21,8 @@ func _init(course: Dictionary, imperial: bool) -> void:
 	_path_card.custom_minimum_size = Vector2(WIDTH - 32.0, 160)
 	_path_card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var track: PackedVector2Array = course.get("track", PackedVector2Array())
-	path.set_track(track)
-	rows.add_child(path)
+	_path_card.set_track(track)
+	rows.add_child(_path_card)
 	_title.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
 	_title.text = course["name"]
 	_title.add_theme_font_size_override("font_size", 18)
@@ -31,14 +31,6 @@ func _init(course: Dictionary, imperial: bool) -> void:
 	# Sees the mouse for its tooltip; the click still reaches the card.
 	_title.mouse_filter = Control.MOUSE_FILTER_PASS
 	_title.resized.connect(_fit_title)
-	_path_card.set_track(track)
-	rows.add_child(_path_card)
-	var title: Label = Label.new()
-	title.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
-	title.text = course["name"]
-	title.add_theme_font_size_override("font_size", 18)
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	var heading: HBoxContainer = HBoxContainer.new()
 	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	heading.add_child(_title)
@@ -61,6 +53,8 @@ func _fit_title() -> void:
 ## The name shown on hover; empty while the whole name fits on the card.
 func name_tooltip() -> String:
 	return _title.tooltip_text
+
+
 ## Shows the course's map under its route, `png` as the app drew it (#192); empty for none.
 func set_map(png: PackedByteArray) -> void:
 	_path_card.set_map(png)

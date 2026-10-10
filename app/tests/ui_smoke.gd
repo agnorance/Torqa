@@ -579,6 +579,8 @@ func _rider_switch() -> void:
 	profile["avatar"] = before
 	torqa.save_profile(profile_id, profile)
 	main.free()
+
+
 ## The ride view's controls (#189): icons with tooltips, the simulation's speeds when
 ## simulating, and a chevron that folds the bar away and back.
 func _ride_bar() -> void:
@@ -634,6 +636,8 @@ func _summary_icons() -> void:
 	var bin: Button = history.get("_delete_button")
 	_check(bin.icon != null and not bin.tooltip_text.is_empty(), "a bin to delete, with a tooltip")
 	main.free()
+
+
 ## The Profile tab's buttons are icons with tooltips, and the rider has an initial (#191).
 func _profile_icons() -> void:
 	var tab: ProfileTab = ProfileTab.new()
@@ -672,6 +676,8 @@ func _profile_icons() -> void:
 	_check(zone_rows == 12 and ranges[0].begins_with("0–110 W"), "zones shown: %s" % [ranges])
 	tab.free()
 	badge.free()
+
+
 ## A course's card shows its map under the route once it has one (#192).
 func _map_preview() -> void:
 	var card: PathCard = PathCard.new()
