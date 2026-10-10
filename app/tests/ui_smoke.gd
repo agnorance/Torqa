@@ -639,43 +639,50 @@ func _summary_icons() -> void:
 
 
 ## The Profile tab's buttons are icons with tooltips, and the rider has an initial (#191).
+## The Profile tab lists the riders as cards (#191, #194): the active one marked, the others
+## with a way to use them, each unfolding to the whole setup in two columns.
 func _profile_icons() -> void:
 	var tab: ProfileTab = ProfileTab.new()
 	root.add_child(tab)
-	for button: Button in [tab.get("_edit_button"), tab.get("_add_button")]:
-		_check(
-			button.icon != null and not button.tooltip_text.is_empty(),
-			"an icon with a tooltip: %s" % button.tooltip_text
-		)
 	var badge: PanelContainer = UiTheme.initial("  david ")
 	_check((badge.get_child(0) as Label).text == "D", "the rider's initial")
-	# The summary unfolds to everything the dialog has (#194).
-	var rider: Dictionary = {
-		"name": "Ann", "language": "de", "drivetrain": "single_cog", "chainring": 46, "cog": 14
-	}
-	var grid: GridContainer = tab.get("_summary")
-	tab.call("_show_summary", rider)
-	var brief: int = grid.get_child_count()
-	tab.expanded = true
-	tab.call("_show_summary", rider)
-	var texts: Array[String] = []
-	for child: Node in grid.get_children():
-		texts.append((child as Label).text)
-	_check(
-		grid.get_child_count() == brief + 14 and "Deutsch" in texts and "46 T" in texts,
-		"all settings unfold: %s" % [texts]
-	)
-	# The zones beside the figures: seven power and five heart-rate zones with their ranges.
-	var zones: VBoxContainer = tab.get("_zones")
-	var zone_rows: int = 0
-	var ranges: Array[String] = []
-	for child: Node in zones.get_children():
-		if child is HBoxContainer:
-			zone_rows += 1
-			ranges.append((child.get_child(2) as Label).text)
-	_check(zone_rows == 12 and ranges[0].begins_with("0–110 W"), "zones shown: %s" % [ranges])
-	tab.free()
 	badge.free()
+	var ann: Dictionary = {
+		"id": "ann",
+		"name": "Ann",
+		"language": "de",
+		"drivetrain": "single_cog",
+		"chainring": 46,
+		"cog": 14,
+		"ftp_w": 220.0,
+		"rider_mass_kg": 60.0,
+		"max_heart_rate_bpm": 190.0
+	}
+	var bob: Dictionary = {"id": "bob", "name": "Bob", "ftp_w": 300.0, "rider_mass_kg": 80.0}
+	tab.call("_show_riders", [ann, bob], "bob")
+	var cards: VBoxContainer = tab.get("_cards")
+	_check(cards.get_child_count() == 2, "a card per rider")
+	var texts: Array[String] = []
+	for label: Node in cards.find_children("*", "Label", true, false):
+		texts.append((label as Label).text)
+	_check("Active" in texts and "Ann" in texts, "the active rider is marked: %s" % [texts])
+	var buttons: Array[String] = []
+	for button: Node in cards.find_children("*", "Button", true, false):
+		buttons.append((button as Button).text)
+	_check(buttons.count("Use") == 1, "the other rider can be used: %s" % [buttons])
+	_check(cards.find_children("*", "GridContainer", true, false).is_empty(), "folded at first")
+	var unfolded: Dictionary = tab.get("_unfolded")
+	unfolded["ann"] = true
+	tab.call("_show_riders", [ann, bob], "bob")
+	var grids: Array[Node] = cards.find_children("*", "GridContainer", true, false)
+	var rows: Array[String] = []
+	for label: Node in cards.find_children("*", "Label", true, false):
+		rows.append((label as Label).text)
+	_check(
+		grids.size() == 1 and "Deutsch" in rows and "46 T" in rows and "Z7 Neuromuscular" in rows,
+		"unfolded: every setting and the zones: %s" % [rows]
+	)
+	tab.free()
 
 
 ## A course's card shows its map under the route once it has one (#192).

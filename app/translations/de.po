@@ -1173,9 +1173,6 @@ msgstr "Steuerung ausblenden"
 msgid "Simulation speed"
 msgstr "Simulationsgeschwindigkeit"
 
-msgid "Switch the rider"
-msgstr "Fahrer wechseln"
-
 msgid "All settings"
 msgstr "Alle Einstellungen"
 
@@ -1204,3 +1201,15 @@ msgstr "Leistungszonen"
 
 msgid "Heart-rate zones"
 msgstr "Herzfrequenzzonen"
+
+msgid "Riders"
+msgstr "Fahrer"
+
+msgid "Use"
+msgstr "Verwenden"
+
+msgid "Ride as this rider"
+msgstr "Als dieser Fahrer fahren"
+
+msgid "Active"
+msgstr "Aktiv"
