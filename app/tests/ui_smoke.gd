@@ -18,7 +18,8 @@ func _run() -> void:
 	_workout_editor()
 	_rider_drivetrain()
 	_shifter_buttons()
-	await _course_cards()
+	_course_cards()
+	await _courses_tab()
 	_video_view()
 	_video_alignment()
 	_translations()
@@ -532,6 +533,22 @@ func _check(condition: bool, what: String) -> void:
 	if not condition:
 		push_error("UI SMOKE TEST FAILED: " + what)
 		_failed = true
+
+
+## A click on the Courses tab while a course page covers the gallery brings it back (#188).
+func _courses_tab() -> void:
+	var main: Control = (load(MAIN_SCENE) as PackedScene).instantiate()
+	root.add_child(main)
+	await process_frame
+	var start: StartPage = main.get_node("StartPage")
+	var detail: Control = start.get("_detail")
+	var courses: Control = start.get("_courses")
+	var tabs: TabContainer = start.get("_tabs")
+	courses.hide()
+	detail.show()
+	tabs.get_tab_bar().tab_clicked.emit(StartPage.Tab.COURSES)
+	_check(courses.visible and not detail.visible, "the Courses tab brings the gallery back")
+	main.queue_free()
 
 
 ## The free camera turns with the mouse while Shift is held, and not without (#66).
