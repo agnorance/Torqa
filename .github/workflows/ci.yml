@@ -18,7 +18,7 @@ permissions:
 jobs:
   image:
     name: Dev image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -53,7 +53,7 @@ jobs:
   checks:
     name: Checks (dev container)
     needs: image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       IMAGE: ${{ needs.image.outputs.tag }}
@@ -65,7 +65,7 @@ jobs:
       # and FFmpeg (the image's inputs) and the dependencies (the lock file and the profiles);
       # not the runner's own Rust, which rust-cache would mix in and which varies between
       # runner images. Only a changed key saves: the dependencies are what is worth keeping.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -114,7 +114,7 @@ jobs:
         run: brew install nasm
       # FFmpeg's libraries, built once per release and platform (ADR 0010) and cached.
       - id: ffmpeg
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/ffmpeg
           key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-ffmpeg.sh') }}
@@ -206,7 +206,7 @@ jobs:
           Get-Command cl, link, make, sh, awk, nasm | Format-Table Name, Source -AutoSize
       # FFmpeg's libraries, built once per release and platform (ADR 0010) and cached.
       - id: ffmpeg
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}\ffmpeg
           key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-ffmpeg.sh') }}
@@ -294,7 +294,7 @@ jobs:
             libdbus-1-dev pkg-config libclang-dev nasm libfontconfig1
       # FFmpeg's libraries, built once per release and platform (ADR 0010) and cached.
       - id: ffmpeg
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/ffmpeg
           key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-ffmpeg.sh') }}

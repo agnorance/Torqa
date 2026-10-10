@@ -195,6 +195,10 @@ msgstr ""
 msgid "Apr"
 msgstr ""
 
+#: core/torqa-app/src/hud.rs:120
+msgid "Ascent to go"
+msgstr ""
+
 #: app/scenes/devices_tab.gd:130
 msgid "Assign buttons to D-Fly channels in E-TUBE, then choose here what each press does"
 msgstr ""
@@ -227,7 +231,7 @@ msgstr ""
 msgid "Back"
 msgstr ""
 
-#: app/scenes/overlay_hud.gd:41
+#: app/scenes/overlay_hud.gd:47
 msgid "Back to the whole ride screen (O or Esc)"
 msgstr ""
 
@@ -335,7 +339,7 @@ msgstr ""
 msgid "Climbed"
 msgstr ""
 
-#: app/scenes/history_screen.gd:276 app/ui/course_card.gd:88
+#: app/scenes/history_screen.gd:276 app/ui/course_card.gd:106
 msgid "Climbing"
 msgstr ""
 
@@ -439,11 +443,11 @@ msgstr ""
 msgid "Double press"
 msgstr ""
 
-#: app/scenes/overlay_hud.gd:45
+#: app/scenes/overlay_hud.gd:51
 msgid "Drag to move the overlay"
 msgstr ""
 
-#: app/scenes/overlay_hud.gd:59
+#: app/scenes/overlay_hud.gd:65
 msgid "Drag to resize the overlay"
 msgstr ""
 
@@ -579,7 +583,7 @@ msgstr ""
 msgid "Fri"
 msgstr ""
 
-#: app/scenes/overlay_hud.gd:41
+#: app/scenes/overlay_hud.gd:47
 msgid "Full view"
 msgstr ""
 
@@ -599,7 +603,7 @@ msgstr ""
 msgid "Gear %d of %d"
 msgstr ""
 
-#: core/torqa-app/src/hud.rs:118
+#: core/torqa-app/src/hud.rs:126
 msgid "Grade"
 msgstr ""
 
@@ -695,7 +699,7 @@ msgstr ""
 msgid "In between, the video follows your distance evenly."
 msgstr ""
 
-#: app/scenes/history_screen.gd:288 core/torqa-app/src/hud.rs:127
+#: app/scenes/history_screen.gd:288 core/torqa-app/src/hud.rs:135
 msgid "Intensity"
 msgstr ""
 
@@ -731,11 +735,11 @@ msgstr ""
 msgid "Language"
 msgstr ""
 
-#: app/scenes/overlay_hud.gd:38
+#: app/scenes/overlay_hud.gd:44
 msgid "Larger (+)"
 msgstr ""
 
-#: app/ui/course_card.gd:87
+#: app/ui/course_card.gd:105
 msgid "Length"
 msgstr ""
 
@@ -859,7 +863,7 @@ msgstr ""
 msgid "New workout…"
 msgstr ""
 
-#: core/torqa-app/src/hud.rs:121
+#: core/torqa-app/src/hud.rs:129
 msgid "Next 500 m"
 msgstr ""
 
@@ -887,7 +891,7 @@ msgstr ""
 msgid "No rides yet. Finished rides appear here."
 msgstr ""
 
-#: app/scenes/start_page.gd:112 app/scenes/start_page.gd:121
+#: app/scenes/start_page.gd:120 app/scenes/start_page.gd:129
 msgid "No trainer connected — choose one under Devices & Settings."
 msgstr ""
 
@@ -1223,7 +1227,7 @@ msgstr ""
 msgid "Single cog: virtual gears"
 msgstr ""
 
-#: app/scenes/overlay_hud.gd:35
+#: app/scenes/overlay_hud.gd:41
 msgid "Smaller (−)"
 msgstr ""
 
@@ -1251,7 +1255,7 @@ msgstr ""
 msgid "Steady"
 msgstr ""
 
-#: app/ui/course_card.gd:89
+#: app/ui/course_card.gd:107
 msgid "Steepest"
 msgstr ""
 
@@ -1283,7 +1287,7 @@ msgstr ""
 msgid "System language"
 msgstr ""
 
-#: app/scenes/history_screen.gd:289 core/torqa-app/src/hud.rs:128
+#: app/scenes/history_screen.gd:289 core/torqa-app/src/hud.rs:136
 msgid "TSS"
 msgstr ""
 
@@ -1391,7 +1395,7 @@ msgstr ""
 msgid "Very light"
 msgstr ""
 
-#: app/ui/course_card.gd:47
+#: app/ui/course_card.gd:65
 msgid "Video"
 msgstr ""
 
@@ -1467,7 +1471,7 @@ msgstr ""
 msgid "Whole route"
 msgstr ""
 
-#: app/scenes/history_screen.gd:290 core/torqa-app/src/hud.rs:129
+#: app/scenes/history_screen.gd:290 core/torqa-app/src/hud.rs:137
 msgid "Work"
 msgstr ""
 
@@ -1535,7 +1539,7 @@ msgstr ""
 msgid "for %d bpm  ·  now %s"
 msgstr ""
 
-#: app/scenes/history_screen.gd:290 core/torqa-app/src/hud.rs:129
+#: app/scenes/history_screen.gd:290 core/torqa-app/src/hud.rs:137
 msgid "kJ"
 msgstr ""
 
