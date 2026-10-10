@@ -16,7 +16,8 @@ already, choose **Replace** to replace it or **Keep both**.
 
 ## Ride a course
 
-Click its card on the Courses tab, then **Ride**. No internet connection is needed.
+Click its card on the Courses tab, then **Ride**. No internet connection is needed. **← Courses**
+or a click on the Courses tab brings the gallery back.
 
 ## Share a course
 
@@ -32,7 +33,8 @@ The library is the `courses` folder of the Torqa data directory:
 | Windows | `%APPDATA%\Torqa\courses` |
 | Linux | `~/.local/share/torqa/courses` |
 
-You can also copy `.tqc` files there directly. The data directory may live in a synced folder.
+You can also copy `.tqc` files there directly. A name too long for its card shows in full
+when you hover over it. The data directory may live in a synced folder.
 
 ## Video courses
 

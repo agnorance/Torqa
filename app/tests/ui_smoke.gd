@@ -20,6 +20,7 @@ func _run() -> void:
 	_shifter_buttons()
 	_course_cards()
 	await _rider_switch()
+	await _courses_tab()
 	_video_view()
 	_video_alignment()
 	_translations()
@@ -477,6 +478,20 @@ func _course_cards() -> void:
 	click.pressed = true
 	card.call("_gui_input", click)
 	_check(opened[0], "a click opens the course")
+	await process_frame
+	await process_frame
+	_check(card.name_tooltip().is_empty(), "a short name needs no tooltip")
+	var long_name: String = "Rennradfahrt - Alpenbrevet 2026 Gold, Andermatt und zurück"
+	var long_course: Dictionary = course.duplicate()
+	long_course["name"] = long_name
+	var long_card: CourseCard = CourseCard.new(long_course, false)
+	root.add_child(long_card)
+	await process_frame
+	await process_frame
+	_check(
+		long_card.name_tooltip() == long_name,
+		"a cut-off name shows in full on hover: %s" % long_card.name_tooltip()
+	)
 	_check(not _has_badge(card), "a GPX course has no video badge")
 	card.free()
 	course["video"] = "Gurten.MP4"
@@ -539,6 +554,21 @@ func _rider_switch() -> void:
 	_check(avatar.rider == other, "the rider on the bike follows the rider: %s" % avatar.rider)
 	profile["avatar"] = before
 	torqa.save_profile(profile_id, profile)
+  main.queue_free()
+  
+## A click on the Courses tab while a course page covers the gallery brings it back (#188).
+func _courses_tab() -> void:
+	var main: Control = (load(MAIN_SCENE) as PackedScene).instantiate()
+	root.add_child(main)
+	await process_frame
+	var start: StartPage = main.get_node("StartPage")
+	var detail: Control = start.get("_detail")
+	var courses: Control = start.get("_courses")
+	var tabs: TabContainer = start.get("_tabs")
+	courses.hide()
+	detail.show()
+	tabs.get_tab_bar().tab_clicked.emit(StartPage.Tab.COURSES)
+	_check(courses.visible and not detail.visible, "the Courses tab brings the gallery back")
 	main.queue_free()
 
 
