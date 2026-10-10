@@ -1210,6 +1210,7 @@ impl TorqaApp {
                 Drivetrain::SingleCog { cog, .. } => i64::from(cog),
                 Drivetrain::Cassette => 14,
             },
+            "default_difficulty_pct" => p.default_difficulty.0,
         }
     }
 
@@ -1250,6 +1251,9 @@ impl TorqaApp {
             bike_mass: Kilograms(number("bike_mass_kg", defaults.bike_mass.0)),
             ftp: Watts(number("ftp_w", defaults.ftp.0)),
             max_heart_rate: BeatsPerMinute(number("max_heart_rate_bpm", defaults.max_heart_rate.0)),
+            default_difficulty: Percent(
+                number("default_difficulty_pct", defaults.default_difficulty.0).clamp(0.0, 100.0),
+            ),
             language: data
                 .get("language")
                 .and_then(|v| v.try_to::<GString>().ok())

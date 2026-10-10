@@ -1,6 +1,6 @@
 //! Rider profiles (R22): body and fitness figures, and the training zones derived from them.
 
-use crate::units::{BeatsPerMinute, Kilograms, Watts};
+use crate::units::{BeatsPerMinute, Kilograms, Percent, Watts};
 
 /// How values are shown to this rider (R24). Everything is stored in SI units.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -58,6 +58,8 @@ pub struct Profile {
     pub avatar: Avatar,
     /// What the rider shifts with.
     pub drivetrain: Drivetrain,
+    /// Trainer difficulty a ride starts with: how much of the road gradient the rider feels.
+    pub default_difficulty: Percent,
 }
 
 impl Default for Profile {
@@ -72,6 +74,7 @@ impl Default for Profile {
             language: String::new(),
             avatar: Avatar::Female,
             drivetrain: Drivetrain::Cassette,
+            default_difficulty: Percent(50.0),
         }
     }
 }

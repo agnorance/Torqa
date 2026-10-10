@@ -97,6 +97,9 @@ msgstr "Anstieg %d  ·  %.1f km ab km %.1f"
 msgid "Climb done in %s"
 msgstr "Anstieg geschafft in %s"
 
+msgid "Ascent to go"
+msgstr "Noch zu klettern"
+
 msgid "Climbed"
 msgstr "Aufstieg"
 
