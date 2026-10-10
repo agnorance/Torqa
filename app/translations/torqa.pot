@@ -223,7 +223,7 @@ msgstr ""
 msgid "Back"
 msgstr ""
 
-#: app/scenes/overlay_hud.gd:41
+#: app/scenes/overlay_hud.gd:47
 msgid "Back to the whole ride screen (O or Esc)"
 msgstr ""
 
@@ -431,11 +431,11 @@ msgstr ""
 msgid "Double press"
 msgstr ""
 
-#: app/scenes/overlay_hud.gd:45
+#: app/scenes/overlay_hud.gd:51
 msgid "Drag to move the overlay"
 msgstr ""
 
-#: app/scenes/overlay_hud.gd:59
+#: app/scenes/overlay_hud.gd:65
 msgid "Drag to resize the overlay"
 msgstr ""
 
@@ -563,7 +563,7 @@ msgstr ""
 msgid "Fri"
 msgstr ""
 
-#: app/scenes/overlay_hud.gd:41
+#: app/scenes/overlay_hud.gd:47
 msgid "Full view"
 msgstr ""
 
@@ -707,7 +707,7 @@ msgstr ""
 msgid "Language"
 msgstr ""
 
-#: app/scenes/overlay_hud.gd:38
+#: app/scenes/overlay_hud.gd:44
 msgid "Larger (+)"
 msgstr ""
 
@@ -1183,7 +1183,7 @@ msgstr ""
 msgid "Single cog: virtual gears"
 msgstr ""
 
-#: app/scenes/overlay_hud.gd:35
+#: app/scenes/overlay_hud.gd:41
 msgid "Smaller (−)"
 msgstr ""
 
