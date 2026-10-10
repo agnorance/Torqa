@@ -33,7 +33,9 @@ preview.png        image for the course list
 - The **library** is the `courses/` folder of the data directory; any `.tqc` placed there is
   listed. Import copies a file into it; export is a plain file copy.
 - **Video courses** use the same format with sync data and a reference (name, size, hash) to the
-  video file next to the course, not the video itself.
+  video file next to the course, not the video itself. Preparing a course puts the course's own
+  copy of the video there (a hard link on one file system), so the course outlives the file it
+  was imported from (#165).
 - Sharing is file-based (mail, Nextcloud, USB, websites); no online catalog for now.
 
 ## Consequences

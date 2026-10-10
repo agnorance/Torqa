@@ -60,15 +60,21 @@ The video's own **sound** plays along at the same speed, without sounding higher
 it is stretched, not sped up like a tape. It fades out when you slow to a crawl or stop.
 Switch it off under **Sound** in the ride options (course page or **Settings** while riding).
 
-Videos are decoded on the processor for now. 1080p is the target; larger videos are scaled
-down while playing, which may not keep up — hardware decoding is planned.
+Videos are decoded on the processor for now, on all its cores. 1080p is the target; larger
+videos are scaled down while playing, which may not keep up on a small machine — hardware
+decoding is planned.
 
-## The video stays where it is
+## The video stays beside the course
 
 Videos are large, so a video course (`.tqc`) only **refers** to its video, it does not contain
-it. Torqa looks for the video where it was imported from, then next to the course file (by name
-and size). To move a video course to another computer, copy the `.tqc` and the video into the
-same folder. If the video is missing, opening the course says which file to put there.
+it. When a course is prepared, Torqa keeps the course's own copy of the video next to the
+course file in the [library](courses.md): a hard link where the library lies on the same disk
+as the video, which takes no extra space, else a copy. The course rides on when the file it was
+imported from is moved or deleted. Opening a course looks for the video where the course keeps
+it, then next to the course file (by name and size). To move a video course to another
+computer, copy the `.tqc` and the video into the same folder. If the video is missing, opening
+the course says which file to put there. Deleting a course deletes its copy of the video too,
+unless another course rides along the same file; a video anywhere else stays where it is.
 
 ## Licences
 

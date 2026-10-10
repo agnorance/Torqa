@@ -134,9 +134,10 @@ static func build() -> Theme:
 	return theme
 
 
-## The translucent card used for HUD and setup panels.
-static func panel() -> StyleBoxFlat:
-	var box: StyleBoxFlat = _box(PANEL, RADIUS, 16, 14)
+## The translucent card used for HUD and setup panels; opaque with `alpha` 1, for a panel
+## over other windows rather than the 3D scene.
+static func panel(alpha: float = PANEL.a) -> StyleBoxFlat:
+	var box: StyleBoxFlat = _box(Color(PANEL, alpha), RADIUS, 16, 14)
 	box.border_color = Color(1, 1, 1, 0.07)
 	box.set_border_width_all(1)
 	box.shadow_color = Color(0, 0, 0, 0.22)
