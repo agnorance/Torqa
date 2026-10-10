@@ -61,6 +61,7 @@ func open(course: Dictionary) -> void:
 	var track: PackedVector2Array = course.get("track", PackedVector2Array())
 	var profile: PackedVector2Array = course.get("profile", PackedVector2Array())
 	_path_card.set_track(track)
+	_path_card.set_map(_torqa.course_preview(_path))
 	_profile.set_profile(profile)
 	_profile.set_climbs([])
 	_records.text = ""
@@ -283,6 +284,19 @@ func _on_world_ready(_info: Dictionary) -> void:
 	_status.text = ""
 	_ride_button.disabled = false
 	ready_to_ride.emit()
+	_keep_preview()
+
+
+## A course from before map pictures gets its own from the world just built (#192).
+func _keep_preview() -> void:
+	if _path.is_empty() or not _torqa.course_preview(_path).is_empty():
+		return
+	var png: PackedByteArray = await MapPreview.capture(
+		get_tree(), _torqa.minimap_mesh(), _torqa.track(2000)
+	)
+	if not png.is_empty():
+		_torqa.set_course_preview(_path, png)
+		_path_card.set_map(png)
 
 
 func _on_failed(message: String) -> void:

@@ -1171,6 +1171,21 @@ impl App {
         courses
     }
 
+    /// The map picture of the course at `path` (#192), the PNG the app drew when the course
+    /// was prepared; `None` without one.
+    #[must_use]
+    pub fn course_preview(path: &Path) -> Option<Vec<u8>> {
+        course::preview(path)
+    }
+
+    /// Keeps `png`, the map picture the app drew, with the course at `path` (#192).
+    ///
+    /// # Errors
+    /// [`AppError::Storage`] if the course file cannot be rewritten.
+    pub fn set_course_preview(&mut self, path: &Path, png: &[u8]) -> Result<(), AppError> {
+        course::set_preview(path, png).map_err(|e| AppError::Storage(e.to_string()))
+    }
+
     /// A name for the course imported from `path`, for the rider to confirm: a GPX file's
     /// route name, an Incyclist video's title, a course file's name, else the file name.
     #[must_use]
