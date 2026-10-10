@@ -19,6 +19,8 @@ const PATHS: Dictionary[String, String] = {
 	"back": '<path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/>',
 	"fold": '<path d="M15 6l-6 6 6 6"/>',
 	"unfold": '<path d="M9 6l6 6-6 6"/>',
+	"down": '<path d="M6 9l6 6 6-6"/>',
+	"up": '<path d="M6 15l6-6 6 6"/>',
 	"pause": '<path d="M8 5v14"/><path d="M16 5v14"/>',
 	"play": '<path d="M7 4l12 8-12 8z" fill="COLOR" stroke="none"/>',
 	"pencil": '<path d="M4 20l4-1 10-10-3-3L5 16z"/><path d="M13 7l3 3"/>',

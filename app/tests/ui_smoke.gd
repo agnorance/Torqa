@@ -24,6 +24,7 @@ func _run() -> void:
 	await _rider_switch()
 	_ride_bar()
 	await _summary_icons()
+	_profile_icons()
 	_video_view()
 	_video_alignment()
 	_translations()
@@ -628,6 +629,35 @@ func _summary_icons() -> void:
 	var bin: Button = history.get("_delete_button")
 	_check(bin.icon != null and not bin.tooltip_text.is_empty(), "a bin to delete, with a tooltip")
 	main.free()
+## The Profile tab's buttons are icons with tooltips, and the rider has an initial (#191).
+func _profile_icons() -> void:
+	var tab: ProfileTab = ProfileTab.new()
+	root.add_child(tab)
+	for button: Button in [tab.get("_edit_button"), tab.get("_add_button")]:
+		_check(
+			button.icon != null and not button.tooltip_text.is_empty(),
+			"an icon with a tooltip: %s" % button.tooltip_text
+		)
+	var badge: PanelContainer = UiTheme.initial("  david ")
+	_check((badge.get_child(0) as Label).text == "D", "the rider's initial")
+	# The summary unfolds to everything the dialog has (#194).
+	var rider: Dictionary = {
+		"name": "Ann", "language": "de", "drivetrain": "single_cog", "chainring": 46, "cog": 14
+	}
+	var grid: GridContainer = tab.get("_summary")
+	tab.call("_show_summary", rider)
+	var brief: int = grid.get_child_count()
+	tab.expanded = true
+	tab.call("_show_summary", rider)
+	var texts: Array[String] = []
+	for child: Node in grid.get_children():
+		texts.append((child as Label).text)
+	_check(
+		grid.get_child_count() == brief + 12 and "Deutsch" in texts and "46 T" in texts,
+		"all settings unfold: %s" % [texts]
+	)
+	tab.free()
+	badge.free()
 
 
 ## The free camera turns with the mouse while Shift is held, and not without (#66).
