@@ -117,7 +117,6 @@ func _ready() -> void:
 	card.add_child(grid)
 	page.add_child(card)
 	tabs.add_child(page)
-	tabs.add_child(grid)
 	_zones.name = tr("Zones")
 	tabs.add_child(_zones)
 	_hud.name = tr("HUD")
