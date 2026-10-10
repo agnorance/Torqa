@@ -1230,6 +1230,21 @@ impl App {
             .map_err(|e| AppError::Storage(e.to_string()))
     }
 
+    /// Whether the ride view's control bar is folded away to its corner (#189).
+    #[must_use]
+    pub fn ride_bar_folded(&self) -> bool {
+        profiles::ride_bar_folded(&self.data_dir)
+    }
+
+    /// Remembers whether the ride view's control bar is folded away.
+    ///
+    /// # Errors
+    /// [`AppError::Storage`] if it cannot be saved.
+    pub fn set_ride_bar_folded(&mut self, folded: bool) -> Result<(), AppError> {
+        profiles::set_ride_bar_folded(&self.data_dir, folded)
+            .map_err(|e| AppError::Storage(e.to_string()))
+    }
+
     /// Whether rides are simulated: with the fake trainer, which can be sped up and jumped
     /// along the route (#53).
     #[must_use]

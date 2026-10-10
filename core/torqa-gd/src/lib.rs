@@ -677,6 +677,18 @@ impl TorqaApp {
         self.command(|app| app.set_overlay_window(window));
     }
 
+    /// Whether the ride view's control bar is folded away to its corner (#189).
+    #[func]
+    fn ride_bar_folded(&self) -> bool {
+        self.app.as_ref().is_some_and(App::ride_bar_folded)
+    }
+
+    /// Remembers whether the ride view's control bar is folded away.
+    #[func]
+    fn set_ride_bar_folded(&mut self, folded: bool) {
+        self.command(|app| app.set_ride_bar_folded(folded));
+    }
+
     /// Whether rides are simulated (fake trainer): they can be sped up and jumped (#53).
     #[func]
     fn simulating(&self) -> bool {
