@@ -22,6 +22,7 @@ func _run() -> void:
 	await _rider_switch()
 	_ride_bar()
 	await _summary_icons()
+	_profile_icons()
 	await _map_preview()
 	await _courses_tab()
 	_video_view()
@@ -618,6 +619,52 @@ func _summary_icons() -> void:
 	var bin: Button = history.get("_delete_button")
 	_check(bin.icon != null and not bin.tooltip_text.is_empty(), "a bin to delete, with a tooltip")
 	main.free()
+
+
+## The Profile tab lists the riders as cards (#191, #194): the active one marked, the others
+## with a way to use them, each unfolding to the whole setup in two columns.
+func _profile_icons() -> void:
+	var tab: ProfileTab = ProfileTab.new()
+	root.add_child(tab)
+	var badge: PanelContainer = UiTheme.initial("  david ")
+	_check((badge.get_child(0) as Label).text == "D", "the rider's initial")
+	badge.free()
+	var ann: Dictionary = {
+		"id": "ann",
+		"name": "Ann",
+		"language": "de",
+		"drivetrain": "single_cog",
+		"chainring": 46,
+		"cog": 14,
+		"ftp_w": 220.0,
+		"rider_mass_kg": 60.0,
+		"max_heart_rate_bpm": 190.0
+	}
+	var bob: Dictionary = {"id": "bob", "name": "Bob", "ftp_w": 300.0, "rider_mass_kg": 80.0}
+	tab.call("_show_riders", [ann, bob], "bob")
+	var cards: VBoxContainer = tab.get("_cards")
+	_check(cards.get_child_count() == 2, "a card per rider")
+	var texts: Array[String] = []
+	for label: Node in cards.find_children("*", "Label", true, false):
+		texts.append((label as Label).text)
+	_check("Active" in texts and "Ann" in texts, "the active rider is marked: %s" % [texts])
+	var buttons: Array[String] = []
+	for button: Node in cards.find_children("*", "Button", true, false):
+		buttons.append((button as Button).text)
+	_check(buttons.count("Use") == 1, "the other rider can be used: %s" % [buttons])
+	_check(cards.find_children("*", "GridContainer", true, false).is_empty(), "folded at first")
+	var unfolded: Dictionary = tab.get("_unfolded")
+	unfolded["ann"] = true
+	tab.call("_show_riders", [ann, bob], "bob")
+	var grids: Array[Node] = cards.find_children("*", "GridContainer", true, false)
+	var rows: Array[String] = []
+	for label: Node in cards.find_children("*", "Label", true, false):
+		rows.append((label as Label).text)
+	_check(
+		grids.size() == 1 and "Deutsch" in rows and "46 T" in rows and "Z7 Neuromuscular" in rows,
+		"unfolded: every setting and the zones: %s" % [rows]
+	)
+	tab.free()
 
 
 ## A course's card shows its map under the route once it has one (#192).
