@@ -608,8 +608,6 @@ msgstr "Deine Strecken"
 msgid "← Courses"
 msgstr "← Strecken"
 
-msgid "Rename"
-msgstr "Umbenennen"
 
 msgid "Rename the course"
 msgstr "Strecke umbenennen"

@@ -21,6 +21,7 @@ func _run() -> void:
 	_course_cards()
 	await _rider_switch()
 	_ride_bar()
+	await _summary_icons()
 	_profile_icons()
 	await _courses_tab()
 	_video_view()
@@ -601,6 +602,22 @@ func _ride_bar() -> void:
 	bar.show_paused(true)
 	_check(pause.icon != pausing and pause.tooltip_text != "", "paused: play to go on")
 	bar.free()
+
+
+## The rename and delete controls of a ride are icons with tooltips (#190).
+func _summary_icons() -> void:
+	var title: EditableTitle = EditableTitle.new("Rename it")
+	root.add_child(title)
+	var pencil: Button = title.get("_button")
+	_check(pencil.icon != null and pencil.tooltip_text == "Rename it", "a pencil to rename")
+	title.free()
+	var main: Control = (load(MAIN_SCENE) as PackedScene).instantiate()
+	root.add_child(main)
+	await process_frame
+	var history: Control = main.get_node("HistoryScreen")
+	var bin: Button = history.get("_delete_button")
+	_check(bin.icon != null and not bin.tooltip_text.is_empty(), "a bin to delete, with a tooltip")
+	main.free()
 
 
 ## The Profile tab lists the riders as cards (#191, #194): the active one marked, the others
