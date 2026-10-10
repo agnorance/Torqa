@@ -555,7 +555,6 @@ func _rider_switch() -> void:
 	profile["avatar"] = before
 	torqa.save_profile(profile_id, profile)
 	main.queue_free()
-  
 ## A click on the Courses tab while a course page covers the gallery brings it back (#188).
 func _courses_tab() -> void:
 	var main: Control = (load(MAIN_SCENE) as PackedScene).instantiate()
