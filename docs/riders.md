@@ -1,8 +1,8 @@
 # Riders
 
 Each rider has a profile: name, weight, bike weight, FTP, maximum heart rate and units
-(metric or imperial). Pick the rider in the **Profile** tab; *Edit…* changes the
-profile, *New rider…* in the list adds one.
+(metric or imperial). Pick the rider in the **Profile** tab; the pencil beside the list
+changes the profile, the plus adds a rider.
 
 - **Weight + bike weight** set how hard climbs are and how fast you roll.
 - **FTP** sets the power zones shown under the power figure (Coggan's seven zones:

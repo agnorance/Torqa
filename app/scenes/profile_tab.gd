@@ -8,6 +8,10 @@ signal profile_changed
 
 var _torqa: TorqaApp
 var _riders: OptionButton = OptionButton.new()
+var _badge_slot: HBoxContainer = HBoxContainer.new()
+var _name_label: Label = Label.new()
+var _edit_button: Button = Button.new()
+var _add_button: Button = Button.new()
 var _summary: GridContainer = GridContainer.new()
 var _dialog: ProfileDialog = ProfileDialog.new()
 
@@ -31,6 +35,11 @@ func refresh() -> void:
 		_riders.set_item_metadata(_riders.item_count - 1, id)
 		if id == active_id:
 			_riders.select(_riders.item_count - 1)
+	for child: Node in _badge_slot.get_children():
+		child.queue_free()
+	var rider_name: String = active.get("name", "")
+	_badge_slot.add_child(UiTheme.initial(rider_name, 48))
+	_name_label.text = rider_name
 	_show_summary(active)
 
 
@@ -43,30 +52,42 @@ static func apply_language(code: String) -> void:
 
 func _init() -> void:
 	add_theme_constant_override("separation", 16)
-	var heading: Label = Label.new()
-	heading.text = tr("Rider")
-	heading.add_theme_font_size_override("font_size", 22)
-	add_child(heading)
+	# The rider as a heading: an initial in a badge and the name, the list of riders and the
+	# pencil and plus beside it (#191).
 	var row: HBoxContainer = HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
+	_badge_slot.add_child(UiTheme.initial("", 48))
+	row.add_child(_badge_slot)
+	var titles: VBoxContainer = VBoxContainer.new()
+	titles.add_theme_constant_override("separation", 0)
+	titles.add_child(UiTheme.caption(tr("Rider")))
 	# Rider names are never translated.
+	_name_label.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+	_name_label.add_theme_font_size_override("font_size", 22)
+	titles.add_child(_name_label)
+	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(titles)
 	_riders.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
-	_riders.custom_minimum_size = Vector2(320, 0)
+	_riders.custom_minimum_size = Vector2(240, 0)
+	_riders.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_riders.tooltip_text = tr("Switch the rider")
 	_riders.item_selected.connect(_on_rider_selected)
 	row.add_child(_riders)
-	var edit: Button = Button.new()
-	edit.text = tr("Edit…")
-	edit.pressed.connect(func() -> void: _dialog.edit(_torqa.profile(), _torqa.hud_layout()))
-	row.add_child(edit)
-	var add: Button = Button.new()
-	add.text = tr("New rider…")
-	add.pressed.connect(func() -> void: _dialog.edit({}, TorqaApp.hud_default_layout()))
-	row.add_child(add)
+	_icon_button(_edit_button, "pencil", tr("Edit…"))
+	_edit_button.pressed.connect(
+		func() -> void: _dialog.edit(_torqa.profile(), _torqa.hud_layout())
+	)
+	row.add_child(_edit_button)
+	_icon_button(_add_button, "plus", tr("New rider…"))
+	_add_button.pressed.connect(func() -> void: _dialog.edit({}, TorqaApp.hud_default_layout()))
+	row.add_child(_add_button)
 	add_child(row)
+	var card: PanelContainer = PanelContainer.new()
 	_summary.columns = 2
 	_summary.add_theme_constant_override("h_separation", 24)
 	_summary.add_theme_constant_override("v_separation", 8)
-	add_child(_summary)
+	card.add_child(_summary)
+	add_child(card)
 	add_child(_dialog)
 	_dialog.profile_confirmed.connect(_on_profile_confirmed)
 
@@ -113,3 +134,10 @@ func _show_summary(profile: Dictionary) -> void:
 		var text: String = row[1]
 		value.text = tr(text)
 		_summary.add_child(value)
+
+
+static func _icon_button(button: Button, icon: String, tooltip: String) -> void:
+	button.icon = UiIcons.texture(icon)
+	button.tooltip_text = tooltip
+	button.focus_mode = Control.FOCUS_NONE
+	button.size_flags_vertical = Control.SIZE_SHRINK_CENTER

@@ -20,6 +20,7 @@ func _run() -> void:
 	_shifter_buttons()
 	_course_cards()
 	_ride_bar()
+	_profile_icons()
 	_video_view()
 	_video_alignment()
 	_translations()
@@ -556,6 +557,21 @@ func _ride_bar() -> void:
 	var finish: Button = bar.get("_finish")
 	_check(finish.visible, "the way back shows")
 	bar.free()
+
+
+## The Profile tab's buttons are icons with tooltips, and the rider has an initial (#191).
+func _profile_icons() -> void:
+	var tab: ProfileTab = ProfileTab.new()
+	root.add_child(tab)
+	for button: Button in [tab.get("_edit_button"), tab.get("_add_button")]:
+		_check(
+			button.icon != null and not button.tooltip_text.is_empty(),
+			"an icon with a tooltip: %s" % button.tooltip_text
+		)
+	var badge: PanelContainer = UiTheme.initial("  david ")
+	_check((badge.get_child(0) as Label).text == "D", "the rider's initial")
+	tab.free()
+	badge.free()
 
 
 ## The free camera turns with the mouse while Shift is held, and not without (#66).

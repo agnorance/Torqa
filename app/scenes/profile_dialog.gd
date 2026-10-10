@@ -27,6 +27,7 @@ var _chainring: SpinBox = _spin(20.0, 60.0, 1.0, " T")
 var _cog: SpinBox = _spin(9.0, 36.0, 1.0, " T")
 var _teeth_rows: Array[Control] = []
 var _hud: HudEditor = HudEditor.new()
+var _badge_slot: HBoxContainer = HBoxContainer.new()
 
 
 func _ready() -> void:
@@ -35,8 +36,22 @@ func _ready() -> void:
 	ok_button_text = tr("Save")
 	min_size = Vector2i(720, 460)
 	var tabs: TabContainer = TabContainer.new()
+	# The rider as a heading, an initial in a badge beside the name, then the figures in a
+	# card (#191).
+	var page: VBoxContainer = VBoxContainer.new()
+	page.name = tr("Profile")
+	page.add_theme_constant_override("separation", 16)
+	var header: HBoxContainer = HBoxContainer.new()
+	header.add_theme_constant_override("separation", 12)
+	_badge_slot.add_child(UiTheme.initial("", 48))
+	header.add_child(_badge_slot)
+	_name_edit.placeholder_text = tr("Name")
+	_name_edit.add_theme_font_size_override("font_size", 22)
+	_name_edit.text_changed.connect(_show_initial)
+	header.add_child(_name_edit)
+	page.add_child(header)
+	var card: PanelContainer = PanelContainer.new()
 	var grid: GridContainer = GridContainer.new()
-	grid.name = tr("Profile")
 	grid.columns = 2
 	grid.add_theme_constant_override("h_separation", 24)
 	grid.add_theme_constant_override("v_separation", 12)
@@ -76,7 +91,6 @@ func _ready() -> void:
 		_language.add_item(tr(language_name) if code.is_empty() else language_name)
 	# i18n-begin
 	for row: Array in [
-		["Name", _name_edit],
 		["Weight", _rider_mass],
 		["Bike weight", _bike_mass],
 		["FTP", _ftp],
@@ -96,7 +110,9 @@ func _ready() -> void:
 		grid.add_child(field)
 		if field in [_chainring, _cog]:
 			_teeth_rows.append_array([caption, field])
-	tabs.add_child(grid)
+	card.add_child(grid)
+	page.add_child(card)
+	tabs.add_child(page)
 	_hud.name = tr("HUD")
 	tabs.add_child(_hud)
 	add_child(tabs)
@@ -111,6 +127,7 @@ func _ready() -> void:
 func edit(profile: Dictionary, hud_layout: PackedStringArray) -> void:
 	_id = profile.get("id", "")
 	_name_edit.text = profile.get("name", "")
+	_show_initial(_name_edit.text)
 	_rider_mass.value = profile.get("rider_mass_kg", 75.0)
 	_bike_mass.value = profile.get("bike_mass_kg", 8.0)
 	_ftp.value = profile.get("ftp_w", 200.0)
@@ -155,6 +172,12 @@ func _on_confirmed() -> void:
 			_hud.layout()
 		)
 	)
+
+
+func _show_initial(rider_name: String) -> void:
+	for child: Node in _badge_slot.get_children():
+		child.queue_free()
+	_badge_slot.add_child(UiTheme.initial(rider_name, 48))
 
 
 func _show_teeth() -> void:
