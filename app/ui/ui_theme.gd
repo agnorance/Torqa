@@ -155,6 +155,11 @@ static func hud_button() -> StyleBoxFlat:
 	return _box(PANEL, 10, 14, 9)
 
 
+## The slim bar of icon buttons over the 3D scene (#189).
+static func bar() -> StyleBoxFlat:
+	return _box(PANEL, 12, 6, 4)
+
+
 ## A list entry that can be dragged; the highlighted one marks the HUD's large figure.
 static func chip(highlighted: bool) -> StyleBoxFlat:
 	var box: StyleBoxFlat = _box(Color(ACCENT, 0.22) if highlighted else SURFACE, 8, 12, 4)
