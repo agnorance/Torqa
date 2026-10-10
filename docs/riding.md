@@ -35,6 +35,11 @@ way.
 Keys: **C** switches the camera, **S** opens the settings, **O** the overlay, **↑** / **↓**
 shift the virtual gears, **M** / **.** / **,** control your music ([audio.md](audio.md)).
 
+**Training zones.** Power zones 1–7 are shares of your FTP (Coggan's 55 / 75 / 90 / 105 / 120 /
+150 %) and heart-rate zones 1–5 shares of your maximum heart rate (60 / 70 / 80 / 90 %). See and
+adjust the top of each zone in **Rider settings → Zones**; the watts and beats they come to
+show beside them, and **Standard zones** puts them back.
+
 ### Virtual gears
 
 With a single cog set as your drivetrain ([riders.md](riders.md)), Torqa shifts for you: 24

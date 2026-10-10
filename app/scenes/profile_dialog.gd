@@ -28,6 +28,7 @@ var _cog: SpinBox = _spin(9.0, 36.0, 1.0, " T")
 var _teeth_rows: Array[Control] = []
 var _hud: HudEditor = HudEditor.new()
 var _badge_slot: HBoxContainer = HBoxContainer.new()
+var _zones: ZonesEditor = ZonesEditor.new()
 
 
 func _ready() -> void:
@@ -113,9 +114,16 @@ func _ready() -> void:
 	card.add_child(grid)
 	page.add_child(card)
 	tabs.add_child(page)
+	tabs.add_child(grid)
+	_zones.name = tr("Zones")
+	tabs.add_child(_zones)
 	_hud.name = tr("HUD")
 	tabs.add_child(_hud)
 	add_child(tabs)
+	for base: SpinBox in [_ftp, _max_heart_rate]:
+		base.value_changed.connect(
+			func(_value: float) -> void: _zones.set_bases(_ftp.value, _max_heart_rate.value)
+		)
 	_units.item_selected.connect(
 		func(index: int) -> void: _hud.edit(_hud.layout(), UNITS[index] == "imperial")
 	)
@@ -144,6 +152,11 @@ func edit(profile: Dictionary, hud_layout: PackedStringArray) -> void:
 	_chainring.value = profile.get("chainring", 50)
 	_cog.value = profile.get("cog", 14)
 	_show_teeth()
+	var power_zones: PackedFloat64Array = profile.get("power_zones_pct", ZonesEditor.DEFAULT_POWER)
+	var heart_zones: PackedFloat64Array = profile.get(
+		"heart_rate_zones_pct", ZonesEditor.DEFAULT_HEART
+	)
+	_zones.edit(power_zones, heart_zones, _ftp.value, _max_heart_rate.value)
 	_hud.edit(hud_layout, UNITS[_units.selected] == "imperial")
 	title = tr("New rider") if _id.is_empty() else tr("Rider settings")
 	popup_centered(Vector2i(960, 600))
@@ -168,6 +181,8 @@ func _on_confirmed() -> void:
 				"drivetrain": DRIVETRAINS[_drivetrain.selected],
 				"chainring": _chainring.value,
 				"cog": _cog.value,
+				"power_zones_pct": _zones.power_pct(),
+				"heart_rate_zones_pct": _zones.heart_pct(),
 			},
 			_hud.layout()
 		)
