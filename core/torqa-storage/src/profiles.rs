@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use torqa_domain::profile::{Avatar, Drivetrain, Profile, UnitSystem};
 use torqa_domain::shifting::{ButtonAction, ButtonMap, Control, Press};
-use torqa_domain::units::{BeatsPerMinute, Kilograms, Watts};
+use torqa_domain::units::{BeatsPerMinute, Kilograms, Percent, Watts};
 
 const PROFILES: &str = "profiles";
 const PROFILE_FILE: &str = "profile.toml";
@@ -57,6 +57,7 @@ struct ProfileFile {
     /// heart rate; the standard zones where missing or out of order.
     power_zones_pct: Vec<f64>,
     heart_rate_zones_pct: Vec<f64>,
+    default_difficulty_pct: f64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -122,6 +123,7 @@ impl From<&Profile> for ProfileFile {
             },
             power_zones_pct: p.power_zones.iter().map(|b| b * 100.0).collect(),
             heart_rate_zones_pct: p.heart_rate_zones.iter().map(|b| b * 100.0).collect(),
+            default_difficulty_pct: p.default_difficulty.0,
         }
     }
 }
@@ -157,6 +159,7 @@ impl From<ProfileFile> for Profile {
             },
             power_zones: Profile::sane_power_zones(&shares(&f.power_zones_pct)),
             heart_rate_zones: Profile::sane_heart_rate_zones(&shares(&f.heart_rate_zones_pct)),
+            default_difficulty: Percent(f.default_difficulty_pct.clamp(0.0, 100.0)),
         }
     }
 }
@@ -772,6 +775,7 @@ mod tests {
             },
             power_zones: [0.5, 0.7, 0.85, 1.0, 1.15, 1.4],
             heart_rate_zones: [0.55, 0.65, 0.75, 0.85],
+            default_difficulty: Percent(65.0),
             ..Profile::default()
         };
         let anna = Profile {
