@@ -1135,20 +1135,6 @@ msgstr "Nächste Kamera"
 msgid "Overlay on / off"
 msgstr "Overlay ein / aus"
 
-msgid "Show the controls"
-msgstr "Steuerung einblenden"
-
-msgid "Fold the controls away"
-msgstr "Steuerung ausblenden"
-
-msgid "Simulation speed"
-msgstr "Simulationsgeschwindigkeit"
-
-msgid "All settings"
-msgstr "Alle Einstellungen"
-
-msgid "Fewer"
-msgstr "Weniger"
 msgid "Zones"
 msgstr "Zonen"
 
@@ -1166,6 +1152,35 @@ msgstr "Coggans Leistungszonen und die üblichen Pulszonen"
 
 msgid "and above"
 msgstr "und darüber"
+
+msgid "Pause"
+msgstr "Pause"
+
+msgid "Resume"
+msgstr "Weiter"
+
+msgid "Paused"
+msgstr "Pausiert"
+
+msgid "Pause the ride: the clock and the trainer wait (P)"
+msgstr "Fahrt pausieren: Uhr und Trainer warten (P)"
+
+msgid "Pause the ride (P)"
+msgstr "Fahrt pausieren (P)"
+msgid "Show the controls"
+msgstr "Steuerung einblenden"
+
+msgid "Fold the controls away"
+msgstr "Steuerung ausblenden"
+
+msgid "Simulation speed"
+msgstr "Simulationsgeschwindigkeit"
+
+msgid "All settings"
+msgstr "Alle Einstellungen"
+
+msgid "Fewer"
+msgstr "Weniger"
 
 msgid "Power zones"
 msgstr "Leistungszonen"

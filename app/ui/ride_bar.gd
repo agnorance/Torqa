@@ -9,6 +9,8 @@ extends PanelContainer
 signal settings_requested
 ## The overlay was asked for (O).
 signal overlay_requested
+## The ride should pause, or go on (P).
+signal pause_requested
 ## The summary, or the way back, was asked for.
 signal finish_requested
 ## A simulation speed was chosen.
@@ -31,6 +33,7 @@ var _fold: Button = Button.new()
 var _tools: HBoxContainer = HBoxContainer.new()
 var _settings: Button = Button.new()
 var _overlay: Button = Button.new()
+var _pause: Button = Button.new()
 var _finish: Button = Button.new()
 var _simulation: HBoxContainer = HBoxContainer.new()
 var _speed_buttons: Array[Button] = []
@@ -57,6 +60,9 @@ func _init() -> void:
 	)
 	_overlay.pressed.connect(overlay_requested.emit)
 	_tools.add_child(_overlay)
+	_icon_button(_pause, "pause", tr("Pause the ride: the clock and the trainer wait (P)"))
+	_pause.pressed.connect(pause_requested.emit)
+	_tools.add_child(_pause)
 	_icon_button(_finish, "flag", tr("View summary"))
 	_finish.pressed.connect(finish_requested.emit)
 	_finish.hide()
@@ -96,6 +102,19 @@ func set_simulating(simulating: bool) -> void:
 func show_speed(scale: float) -> void:
 	for i: int in range(_speed_buttons.size()):
 		_speed_buttons[i].set_pressed_no_signal(is_equal_approx(TIME_SCALES[i], scale))
+
+
+## Shows the pause button while a ride is under way, or hides it.
+func show_pause(shown: bool) -> void:
+	_pause.visible = shown
+
+
+## Shows the ride as paused (play to go on) or as going (pause).
+func show_paused(paused: bool) -> void:
+	_pause.icon = UiIcons.texture("play" if paused else "pause", ICON)
+	_pause.tooltip_text = (
+		tr("Resume") if paused else tr("Pause the ride: the clock and the trainer wait (P)")
+	)
 
 
 ## Shows the settings button, or hides it (once the ride is over).

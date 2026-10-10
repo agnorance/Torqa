@@ -32,7 +32,7 @@ way.
   [history.md](history.md)).
 - **Abort without saving** ends the ride after asking once; nothing is saved.
 
-Keys: **C** switches the camera, **S** opens the settings, **O** the overlay, **↑** / **↓**
+Keys: **P** (or space) pauses the ride and goes on with it, the clock, the rider and the trainer waiting; **C** switches the camera, **S** opens the settings, **O** the overlay, **↑** / **↓**
 shift the virtual gears, **M** / **.** / **,** control your music ([audio.md](audio.md)).
 
 **Training zones.** Power zones 1–7 are shares of your FTP (Coggan's 55 / 75 / 90 / 105 / 120 /

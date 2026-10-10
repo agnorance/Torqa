@@ -3,6 +3,8 @@
 // with some light shining through. Flower heads take one of the palette's flower colours per
 // clump.
 shader_type spatial;
+// The wind clock: the world advances it, and holds it while the ride is paused.
+global uniform float wind_time;
 render_mode cull_disabled;
 
 uniform float wind_strength : hint_range(0.0, 1.0) = 0.12;
@@ -19,8 +21,8 @@ void vertex() {
 	// UV.y runs from the root (0) to the tip (1).
 	float bend = UV.y * UV.y;
 	vec3 world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	float gust = sin(TIME * 1.6 + world.x * 0.31 + world.z * 0.17) * 0.65
-		+ sin(TIME * 3.3 + world.x * 1.1 - world.z * 0.7) * 0.35;
+	float gust = sin(wind_time * 1.6 + world.x * 0.31 + world.z * 0.17) * 0.65
+		+ sin(wind_time * 3.3 + world.x * 1.1 - world.z * 0.7) * 0.35;
 	vec3 wind = vec3(wind_direction.x, 0.0, wind_direction.y) * (0.6 + 0.4 * gust);
 	// The wind blows in world space; the tuft is turned and scaled by its instance.
 	mat3 to_local = inverse(mat3(MODEL_MATRIX));
