@@ -145,6 +145,10 @@ impl TorqaApp {
     #[signal]
     fn remembered_missing(names: PackedStringArray);
 
+    /// The active rider changed: another one selected, or one saved or created.
+    #[signal]
+    fn profile_changed();
+
     /// Something went wrong.
     #[signal]
     fn failed(message: GString);
@@ -1120,6 +1124,19 @@ impl TorqaApp {
         }
     }
 
+    /// Pauses or resumes the ride: the clock, the road and the trainer wait. Returns whether
+    /// the ride is paused afterwards.
+    #[func]
+    fn set_paused(&mut self, paused: bool) -> bool {
+        self.app.as_mut().is_some_and(|app| app.set_paused(paused))
+    }
+
+    /// Whether the ride is paused.
+    #[func]
+    fn is_paused(&self) -> bool {
+        self.app.as_ref().is_some_and(App::is_paused)
+    }
+
     /// Changes difficulty and descent mode of the current ride.
     #[func]
     fn adjust_ride(&mut self, difficulty: f64, flat_descents: bool) {
@@ -1203,6 +1220,8 @@ impl TorqaApp {
                 Drivetrain::SingleCog { cog, .. } => i64::from(cog),
                 Drivetrain::Cassette => 14,
             },
+            "power_zones_pct" => &percent(&p.power_zones),
+            "heart_rate_zones_pct" => &percent(&p.heart_rate_zones),
             "default_difficulty_pct" => p.default_difficulty.0,
         }
     }
@@ -1221,7 +1240,11 @@ impl TorqaApp {
     #[func]
     #[allow(clippy::needless_pass_by_value)] // #[func] parameters are passed by value from Godot
     fn select_profile(&mut self, id: GString) -> bool {
-        self.command(|app| app.select_profile(&id.to_string()))
+        let selected = self.command(|app| app.select_profile(&id.to_string()));
+        if selected {
+            self.signals().profile_changed().emit();
+        }
+        selected
     }
 
     /// Saves a rider (a new one if `id` is empty) from a dictionary shaped like `profile()`
@@ -1244,6 +1267,11 @@ impl TorqaApp {
             bike_mass: Kilograms(number("bike_mass_kg", defaults.bike_mass.0)),
             ftp: Watts(number("ftp_w", defaults.ftp.0)),
             max_heart_rate: BeatsPerMinute(number("max_heart_rate_bpm", defaults.max_heart_rate.0)),
+            power_zones: Profile::sane_power_zones(&shares(&data, "power_zones_pct")),
+            heart_rate_zones: Profile::sane_heart_rate_zones(&shares(
+                &data,
+                "heart_rate_zones_pct",
+            )),
             default_difficulty: Percent(
                 number("default_difficulty_pct", defaults.default_difficulty.0).clamp(0.0, 100.0),
             ),
@@ -1294,7 +1322,10 @@ impl TorqaApp {
             return GString::new();
         };
         match app.save_profile(id.as_deref(), profile) {
-            Ok(id) => GString::from(id.as_str()),
+            Ok(id) => {
+                self.signals().profile_changed().emit();
+                GString::from(id.as_str())
+            }
             Err(error) => {
                 let message = error.to_string();
                 self.signals()
@@ -1342,6 +1373,7 @@ impl TorqaApp {
             |value: Option<u8>| value.map_or_else(Variant::nil, |z| i64::from(z).to_variant());
         let mut dict = vdict! {
             "elapsed_s" => state.elapsed.as_secs_f64(),
+            "paused" => app.is_paused(),
             "distance_m" => state.distance.0,
             "speed_kmh" => state.speed.as_kilometers_per_hour(),
             "power" => &optional(t.power.map(|p| p.0)),
@@ -1817,6 +1849,19 @@ fn hud_values(app: &App) -> VarDictionary {
         values.set(id, &value.map_or_else(Variant::nil, |v| v.to_variant()));
     }
     values
+}
+
+/// Zone bounds as percentages, for the rider settings.
+fn percent(bounds: &[f64]) -> PackedFloat64Array {
+    bounds.iter().map(|b| b * 100.0).collect()
+}
+
+/// Zone bounds from `data[key]` in percent, as shares; empty where missing.
+fn shares(data: &VarDictionary, key: &str) -> Vec<f64> {
+    data.get(key)
+        .and_then(|v| v.try_to::<PackedFloat64Array>().ok())
+        .map(|a| a.as_slice().iter().map(|p| p / 100.0).collect())
+        .unwrap_or_default()
 }
 
 /// Preview points as Godot vectors.

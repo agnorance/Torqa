@@ -54,8 +54,14 @@ shot hairpin ROUTE=gurtenstrasse DIST=1240 CAM=2
 ```
 
 Fixtures: `gurtenstrasse` (Wabern village, a hillside climb with a hairpin), `kirchenfeldbruecke`
-(Bern, a bridge, blocks and halls), `bielersee` (lakeside road, vineyards, rock cuttings). Map
-and terrain tiles are cached in the container's volumes after the first run.
+(Bern, a bridge, blocks and halls), `bielersee` (lakeside road, vineyards, rock cuttings), and
+`oberalp`, the reference route (#167): 33.6 km of a planner's file from Andermatt over the
+Oberalp pass to Disentis, with hairpins, three road tunnels, the rack railway alongside, a lake
+the planner drew the road through, the summit tunnel and two villages. Render its views after
+any change to routes, roads, tunnels or railways; `torqa-cli route core/fixtures/oberalp.gpx`
+prints its figures, and `cargo test -p torqa-app -- --ignored reference_route` checks them
+against the cached tiles. Map and terrain tiles are cached in the container's volumes after
+the first run.
 
 ## Pitfalls
 
